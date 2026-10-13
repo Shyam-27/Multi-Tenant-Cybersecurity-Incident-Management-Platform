@@ -924,3 +924,80 @@ input:focus, select:focus, textarea:focus {
   margin: 0;
 }
 
+/* Audit Trail & Immutability Styles */
+.audit-actions-bar {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.audit-filter-bar {
+  display: grid;
+  grid-template-columns: 2fr 1.2fr 1.2fr;
+  gap: 1rem;
+}
+
+@media (max-width: 768px) {
+  .audit-filter-bar {
+    grid-template-columns: 1fr;
+  }
+}
+
+.audit-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.audit-table th,
+.audit-table td {
+  padding: 0.75rem 1rem;
+  text-align: left;
+  border-bottom: 1px solid var(--border-color);
+  font-size: 0.85rem;
+}
+
+.audit-table th {
+  background: var(--bg-tertiary);
+  color: var(--text-muted);
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.audit-action-tag {
+  display: inline-block;
+  padding: 0.2rem 0.5rem;
+  border-radius: 0.25rem;
+  background: rgba(59, 130, 246, 0.15);
+  color: #60a5fa;
+  font-family: monospace;
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+
+.hash-code {
+  background: rgba(0, 0, 0, 0.35);
+  padding: 0.15rem 0.35rem;
+  border-radius: 0.25rem;
+  font-family: monospace;
+  font-size: 0.7rem;
+  color: var(--accent-emerald);
+}
+
+.audit-details-dropdown {
+  max-width: 280px;
+}
+
+.audit-details-pre {
+  background: rgba(0, 0, 0, 0.4);
+  padding: 0.5rem;
+  border-radius: 0.25rem;
+  font-size: 0.7rem;
+  max-height: 150px;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  word-break: break-all;
+  margin-top: 0.35rem;
+  border: 1px solid var(--border-color);
+}
+

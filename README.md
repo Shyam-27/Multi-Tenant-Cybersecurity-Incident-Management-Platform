@@ -1,6 +1,6 @@
 # SentinelOps — Multi-Tenant Cybersecurity Incident Management Platform
 
-SentinelOps is a production-grade, security-focused SaaS platform for managing cybersecurity incidents across isolated organizations. This repository implements **Phase 4: Digital Evidence Management & Secure File Uploads**.
+SentinelOps is a production-grade, security-focused SaaS platform for managing cybersecurity incidents across isolated organizations. This repository implements **Phase 5: Immutable Audit Trail & Security Event Monitoring**.
 
 ---
 
@@ -19,13 +19,14 @@ SentinelOps is a production-grade, security-focused SaaS platform for managing c
 Browser (React/TypeScript :5173) ──► FastAPI Backend (:8000) ──► PostgreSQL (:5432)
                                               │
                                               ├──► Alembic Migrations
+                                              ├──► Append-Only Audit Trail (SHA-256 Hash Chain)
                                               └──► Tenant Storage (uploads/{tenant_id}/...)
 ```
 
-- **Frontend**: Vite 8.3, React 19, TypeScript 5.8, SOC operations dashboard with incident metrics, filtering, detail drawer, investigation timeline notes, and digital evidence artifacts.
-- **Backend**: FastAPI 0.116, SQLAlchemy 2.0, Pydantic 2.14, Argon2id password hashing, PyJWT HS256 tokens, streaming file validation and hashing.
-- **Database**: PostgreSQL 16 Alpine with Alembic migrations (`20261013_0005`).
-- **Security**: Server-derived tenant context, strict RBAC authorization, constant-time authentication, IDOR mitigation (strict 404 policies on cross-tenant requests), token revocation, state-machine transition validation, streaming magic-byte signature inspection, SHA-256 integrity verification, safe path resolution, and `nosniff` streaming downloads.
+- **Frontend**: Vite 8.3, React 19, TypeScript 5.8, SOC operations dashboard with incident metrics, filtering, detail drawer, timeline notes, digital evidence artifacts, and an Immutable Audit Trail log viewer with on-demand hash chain verification.
+- **Backend**: FastAPI 0.116, SQLAlchemy 2.0, Pydantic 2.14, Argon2id password hashing, PyJWT HS256 tokens, streaming file validation, append-only audit recording service with cryptographic SHA-256 chaining.
+- **Database**: PostgreSQL 16 Alpine with Alembic migrations (`20261013_0006`).
+- **Security**: Server-derived tenant context, strict RBAC authorization, constant-time authentication, IDOR mitigation (strict 404 policies on cross-tenant requests), token revocation, state-machine transition validation, streaming magic-byte signature inspection, SHA-256 integrity verification, safe path resolution, and append-only audit logging with cryptographic chain integrity checks.
 
 ---
 
@@ -70,10 +71,12 @@ Browser (React/TypeScript :5173) ──► FastAPI Backend (:8000) ──► Pos
    Transition status (`OPEN` → `INVESTIGATING` → `CONTAINED` → `RESOLVED` → `CLOSED`), update severities or assignees, and append investigation notes with `POST /api/v1/incidents/{id}/notes`.
 5. **Manage Evidence**:
    Upload digital forensic artifacts (PCAP, PCAPNG, ZIP, TAR, GZ, TXT, LOG, JSON, CSV) with incremental SHA-256 hashing and download with enforced `X-Content-Type-Options: nosniff`.
+6. **Audit & Verify Security Trail**:
+   Inspect security events under the SOC Audit Trail tab. Verify cryptographic hash chain integrity via `GET /api/v1/audit-events/verify-chain`.
 
 ---
 
-## 5. Incident & Evidence Management Endpoints
+## 5. API Endpoints
 
 | Endpoint | Method | Role Allowed | Description |
 |---|---|---|---|
@@ -86,13 +89,15 @@ Browser (React/TypeScript :5173) ──► FastAPI Backend (:8000) ──► Pos
 | `/api/v1/incidents/{id}/evidence` | GET | All authenticated | List evidence artifacts attached to incident. |
 | `/api/v1/incidents/{id}/evidence` | POST | `TENANT_ADMIN`, `SECURITY_ANALYST` | Upload evidence artifact (max 10 MiB, magic byte validated). |
 | `/api/v1/incidents/{id}/evidence/{eid}/download` | GET | All authenticated | Download evidence artifact (`nosniff`, tenant-isolated). |
+| `/api/v1/audit-events` | GET | All authenticated | Paginated, filtered audit events (tenant-isolated). |
+| `/api/v1/audit-events/verify-chain` | GET | `TENANT_ADMIN`, `SUPER_ADMIN` | Cryptographic SHA-256 chain verification. |
+| `/api/v1/audit-events/{id}` | GET | All authenticated | Single audit event details (404 anti-IDOR). |
 
-### Evidence Security Controls
-- **File Allowlist**: `.log`, `.txt`, `.json`, `.csv`, `.pcap`, `.pcapng`, `.zip`, `.tar`, `.gz`, `.tgz`.
-- **Magic Byte Verification**: Inspects file headers to enforce formats (e.g. PCAP headers `\xd4\xc3\xb2\xa1`, PCAPNG `\x0a\x0d\x0d\x0a`, ZIP `PK\x03\x04`, GZIP `\x1f\x8b`, text UTF-8 checks) and strictly blocks executable binaries (`MZ`, `\x7fELF`).
-- **Streaming Validation & Size Enforcement**: 10 MiB maximum limit checked chunk-by-chunk during upload.
-- **Integrity**: Incremental SHA-256 calculation stored in the database.
-- **Tenant Path Isolation**: Files stored at `uploads/{tenant_id}/{incident_id}/{evidence_id}/{filename}` with path traversal protection.
+### Audit & Security Event Monitoring
+- **Append-Only Enforcement**: No update (`PUT`/`PATCH`) or deletion (`DELETE`) endpoints are exposed.
+- **SHA-256 Hash Chaining**: Every audit event links to its predecessor via `previous_hash` and generates an `event_hash` over canonically sorted JSON metadata.
+- **Automatic Secret Redaction**: Credentials, password hashes, and bearer tokens are automatically replaced with `[REDACTED]`.
+- **Security Signal Detection**: Records security events on login failures, cross-tenant resource probing, privilege escalation attempts, and evidence validation violations.
 
 ---
 
@@ -104,7 +109,7 @@ Migrations execute automatically upon container startup (`alembic upgrade head`)
   ```powershell
   docker compose exec backend alembic current
   ```
-  *(Expected: `20261013_0005 (head)`)*
+  *(Expected: `20261013_0006 (head)`)*
 - **Apply Migrations**:
   ```powershell
   docker compose exec backend alembic upgrade head
@@ -124,24 +129,25 @@ Run the full pytest suite in the isolated test environment:
 docker compose exec backend pytest -v
 ```
 
-**54 automated test cases** cover:
+**72 automated test cases** cover:
 - Health probes and database connectivity.
 - Authentication, Argon2id hashing, and JWT lifecycle/logout revocation.
 - RBAC permissions (Super Admin, Tenant Admin, Analyst, Viewer).
 - User management and anti-privilege escalation.
-- Multi-tenant data isolation on users, incidents, notes, and evidence (strict 404 policy).
+- Multi-tenant data isolation on users, incidents, notes, evidence, and audit logs (strict 404 policy).
 - Incident CRUD, server-derived tenant context, filters, and pagination.
 - Status transition state-machine validation and timestamp handling.
 - Cross-tenant analyst assignment rejection (400).
 - Protection of immutable fields (`tenant_id`, `created_by_id`, `created_at`).
 - Digital evidence upload, size enforcement, magic byte signatures, SHA-256 calculation, and nosniff downloads.
+- Audit event persistence, actor and tenant attribution, login tracking, incident & evidence audit recording, pagination, query filters, hash chain verification, and database tampering detection.
 
 ---
 
 ## 8. Role-Based Access Control (RBAC) Matrix
 
 See [docs/authorization.md](file:///d:/CyberSecurity_Incident_Managment_Platform/docs/authorization.md) for full authorization rules and access models:
-- **`SUPER_ADMIN`**: Platform-wide administration.
-- **`TENANT_ADMIN`**: Manage users, organization settings, and incidents within their tenant.
-- **`SECURITY_ANALYST`**: Active incident triage, investigation, status transitions, and notes.
-- **`SECURITY_VIEWER`**: Read-only auditor view of incidents, notes, and metrics.
+- **`SUPER_ADMIN`**: Platform-wide administration and audit access.
+- **`TENANT_ADMIN`**: Manage users, organization settings, incidents, and verify tenant audit chains.
+- **`SECURITY_ANALYST`**: Incident triage, status transitions, notes, and evidence upload/download.
+- **`SECURITY_VIEWER`**: Read-only auditor view of incidents, notes, evidence, metrics, and audit events.

@@ -44,6 +44,11 @@ SentinelOps enforces strict server-side Role-Based Access Control (RBAC) and mul
 | `/api/v1/incidents/{id}/evidence` (List) | GET | Allowed (All/Filtered) | Allowed (Own Org) | Allowed (Own Org) | Allowed (Own Org) |
 | `/api/v1/incidents/{id}/evidence` (Upload) | POST | Allowed | Allowed (Own Org) | Allowed (Own Org) | **Forbidden (403)** |
 | `/api/v1/incidents/{id}/evidence/{eid}/download` | GET | Allowed | Allowed (Own Org) | Allowed (Own Org) | Allowed (Own Org) |
+| `/api/v1/audit-events` (List) | GET | Allowed (All/Filtered) | Allowed (Own Org) | Allowed (Own Org) | Allowed (Own Org) |
+| `/api/v1/audit-events/verify-chain` | GET | Allowed | Allowed (Own Org) | **Forbidden (403)** | **Forbidden (403)** |
+| `/api/v1/audit-events/{id}` (Detail) | GET | Allowed | Allowed (Own Org) | Allowed (Own Org) | Allowed (Own Org) |
+| Audit Update / Delete (`PUT/PATCH/DELETE`) | ANY | **Not Found (405/404)** | **Not Found (405/404)** | **Not Found (405/404)** | **Not Found (405/404)** |
+| Cross-tenant `/audit-events/{id}` | GET | Allowed | **Not Found (404)** | **Not Found (404)** | **Not Found (404)** |
 | Cross-tenant `/incidents/{id}` | GET/PATCH/NOTES/EVIDENCE | Allowed | **Not Found (404)** | **Not Found (404)** | **Not Found (404)** |
 
 ---

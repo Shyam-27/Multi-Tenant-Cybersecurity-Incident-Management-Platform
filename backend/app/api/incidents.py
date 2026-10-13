@@ -1,4 +1,5 @@
 from math import ceil
+from typing import Any
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -7,6 +8,7 @@ from sqlalchemy.orm import Session, selectinload
 
 from app.core.database import get_db
 from app.dependencies.auth import get_current_user, require_roles
+from app.models.audit import ActorType, AuditOutcome
 from app.models.evidence import Evidence
 from app.models.incident import (
     Incident,
@@ -26,7 +28,9 @@ from app.schemas.incident import (
     IncidentNoteResponse,
     UpdateIncidentRequest,
 )
+from app.services.audit_service import record_audit_event
 from app.services.incident_service import compute_resolved_at, validate_status_transition
+from fastapi import Request
 
 router = APIRouter(prefix="/incidents", tags=["incidents"])
 
@@ -135,6 +139,7 @@ def get_incident_metrics(
 @router.post("", response_model=IncidentDetailResponse, status_code=status.HTTP_201_CREATED)
 def create_incident(
     data: CreateIncidentRequest,
+    request: Request,
     current_user: User = Depends(
         require_roles(UserRole.TENANT_ADMIN, UserRole.SECURITY_ANALYST, UserRole.SUPER_ADMIN)
     ),
@@ -180,6 +185,26 @@ def create_incident(
         created_by_id=current_user.id,
     )
     db.add(incident)
+    db.flush()
+
+    record_audit_event(
+        db=db,
+        action="INCIDENT_CREATED",
+        resource_type="incident",
+        resource_id=str(incident.id),
+        outcome=AuditOutcome.SUCCESS,
+        actor_user=current_user,
+        actor_type=ActorType.USER,
+        tenant_id=incident.tenant_id,
+        details={
+            "title": incident.title,
+            "category": incident.category,
+            "severity": incident.severity,
+            "assigned_to_id": str(incident.assigned_to_id) if incident.assigned_to_id else None,
+        },
+        request=request,
+    )
+
     db.commit()
 
     # Re-fetch with loaded relations
@@ -300,6 +325,7 @@ def get_incident_by_id(
 def update_incident(
     incident_id: UUID,
     data: UpdateIncidentRequest,
+    request: Request,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> IncidentDetailResponse:
@@ -318,6 +344,8 @@ def update_incident(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Security viewers are not permitted to modify incidents",
         )
+
+    changes: dict[str, Any] = {}
 
     # Validate analyst assignment if provided
     if data.assigned_to_id is not None and data.assigned_to_id != incident.assigned_to_id:
@@ -338,22 +366,45 @@ def update_incident(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Incidents may only be assigned to a SECURITY_ANALYST or TENANT_ADMIN",
             )
+        changes["assigned_to_id"] = {
+            "old": str(incident.assigned_to_id) if incident.assigned_to_id else None,
+            "new": str(data.assigned_to_id),
+        }
         incident.assigned_to_id = data.assigned_to_id
 
     # Validate status transition if status is being changed
     if data.status is not None and data.status.value != incident.status:
         validate_status_transition(incident.status, data.status.value)
         incident.resolved_at = compute_resolved_at(incident.status, data.status.value, incident.resolved_at)
+        changes["status"] = {"old": incident.status, "new": data.status.value}
         incident.status = data.status.value
 
-    if data.title is not None:
+    if data.title is not None and data.title.strip() != incident.title:
+        changes["title"] = {"old": incident.title, "new": data.title.strip()}
         incident.title = data.title.strip()
-    if data.description is not None:
+    if data.description is not None and data.description.strip() != incident.description:
+        changes["description"] = "updated"
         incident.description = data.description.strip()
-    if data.category is not None:
+    if data.category is not None and data.category.value != incident.category:
+        changes["category"] = {"old": incident.category, "new": data.category.value}
         incident.category = data.category.value
-    if data.severity is not None:
+    if data.severity is not None and data.severity.value != incident.severity:
+        changes["severity"] = {"old": incident.severity, "new": data.severity.value}
         incident.severity = data.severity.value
+
+    if changes:
+        record_audit_event(
+            db=db,
+            action="INCIDENT_UPDATED",
+            resource_type="incident",
+            resource_id=str(incident.id),
+            outcome=AuditOutcome.SUCCESS,
+            actor_user=current_user,
+            actor_type=ActorType.USER,
+            tenant_id=incident.tenant_id,
+            details={"changes": changes},
+            request=request,
+        )
 
     db.commit()
 
@@ -373,6 +424,7 @@ def update_incident(
 def add_investigation_note(
     incident_id: UUID,
     data: CreateNoteRequest,
+    request: Request,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> IncidentNoteResponse:
@@ -403,6 +455,21 @@ def add_investigation_note(
         content=note_text,
     )
     db.add(note)
+    db.flush()
+
+    record_audit_event(
+        db=db,
+        action="INVESTIGATION_NOTE_ADDED",
+        resource_type="incident_note",
+        resource_id=str(note.id),
+        outcome=AuditOutcome.SUCCESS,
+        actor_user=current_user,
+        actor_type=ActorType.USER,
+        tenant_id=incident.tenant_id,
+        details={"incident_id": str(incident.id), "content_preview": note_text[:100]},
+        request=request,
+    )
+
     db.commit()
     db.refresh(note)
 

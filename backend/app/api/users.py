@@ -1,3 +1,4 @@
+from typing import Any
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -7,8 +8,11 @@ from sqlalchemy.orm import Session
 from app.core.database import get_db
 from app.core.security import hash_password
 from app.dependencies.auth import get_current_user, require_roles
+from app.models.audit import ActorType, AuditOutcome
 from app.models.user import User, UserRole
 from app.schemas.user import CreateUserRequest, UpdateUserRequest, UserDetailResponse
+from app.services.audit_service import record_audit_event
+from fastapi import Request
 
 router = APIRouter(prefix="/users", tags=["users"])
 
@@ -34,6 +38,7 @@ def list_users(
 @router.post("", response_model=UserDetailResponse, status_code=status.HTTP_201_CREATED)
 def create_user(
     data: CreateUserRequest,
+    request: Request,
     current_user: User = Depends(require_roles(UserRole.TENANT_ADMIN, UserRole.SUPER_ADMIN)),
     db: Session = Depends(get_db),
 ) -> User:
@@ -43,6 +48,18 @@ def create_user(
 
     # Privilege escalation prevention
     if current_user.role == UserRole.TENANT_ADMIN.value and data.role == UserRole.SUPER_ADMIN:
+        record_audit_event(
+            db=db,
+            action="PRIVILEGE_ESCALATION_ATTEMPT",
+            resource_type="user",
+            outcome=AuditOutcome.DENIED,
+            actor_user=current_user,
+            actor_type=ActorType.USER,
+            tenant_id=current_user.tenant_id,
+            details={"attempted_role": "SUPER_ADMIN", "target_email": email},
+            request=request,
+        )
+        db.commit()
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Tenant administrators cannot grant SUPER_ADMIN privileges",
@@ -60,6 +77,20 @@ def create_user(
         is_active=True,
     )
     db.add(new_user)
+    db.flush()
+
+    record_audit_event(
+        db=db,
+        action="USER_CREATED",
+        resource_type="user",
+        resource_id=str(new_user.id),
+        outcome=AuditOutcome.SUCCESS,
+        actor_user=current_user,
+        actor_type=ActorType.USER,
+        tenant_id=new_user.tenant_id,
+        details={"name": new_user.name, "email": new_user.email, "role": new_user.role},
+        request=request,
+    )
     db.commit()
     db.refresh(new_user)
     return new_user
@@ -86,6 +117,7 @@ def get_user_by_id(
 def update_user(
     user_id: UUID,
     data: UpdateUserRequest,
+    request: Request,
     current_user: User = Depends(require_roles(UserRole.TENANT_ADMIN, UserRole.SUPER_ADMIN)),
     db: Session = Depends(get_db),
 ) -> User:
@@ -106,17 +138,48 @@ def update_user(
 
     # Privilege escalation prevention
     if current_user.role == UserRole.TENANT_ADMIN.value and data.role == UserRole.SUPER_ADMIN:
+        record_audit_event(
+            db=db,
+            action="PRIVILEGE_ESCALATION_ATTEMPT",
+            resource_type="user",
+            resource_id=str(user.id),
+            outcome=AuditOutcome.DENIED,
+            actor_user=current_user,
+            actor_type=ActorType.USER,
+            tenant_id=current_user.tenant_id,
+            details={"attempted_role": "SUPER_ADMIN", "target_user_id": str(user.id)},
+            request=request,
+        )
+        db.commit()
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Tenant administrators cannot grant SUPER_ADMIN privileges",
         )
 
-    if data.name is not None:
+    changes: dict[str, Any] = {}
+    if data.name is not None and data.name.strip() != user.name:
+        changes["name"] = {"old": user.name, "new": data.name.strip()}
         user.name = data.name.strip()
-    if data.role is not None:
+    if data.role is not None and data.role.value != user.role:
+        changes["role"] = {"old": user.role, "new": data.role.value}
         user.role = data.role.value
-    if data.is_active is not None:
+    if data.is_active is not None and data.is_active != user.is_active:
+        changes["is_active"] = {"old": user.is_active, "new": data.is_active}
         user.is_active = data.is_active
+
+    if changes:
+        record_audit_event(
+            db=db,
+            action="USER_UPDATED",
+            resource_type="user",
+            resource_id=str(user.id),
+            outcome=AuditOutcome.SUCCESS,
+            actor_user=current_user,
+            actor_type=ActorType.USER,
+            tenant_id=user.tenant_id,
+            details={"changes": changes},
+            request=request,
+        )
 
     db.commit()
     db.refresh(user)

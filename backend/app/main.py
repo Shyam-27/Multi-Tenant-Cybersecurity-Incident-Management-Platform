@@ -1,6 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.api.audit import router as audit_router
 from app.api.auth import router as auth_router
 from app.api.evidence import router as evidence_router
 from app.api.health import router as health_router
@@ -10,7 +11,7 @@ from app.api.users import router as user_router
 from app.core.config import get_settings
 
 settings = get_settings()
-app = FastAPI(title="SentinelOps API", version="0.4.0", docs_url="/docs", redoc_url="/redoc")
+app = FastAPI(title="SentinelOps API", version="0.5.0", docs_url="/docs", redoc_url="/redoc")
 
 app.add_middleware(
     CORSMiddleware,
@@ -30,3 +31,4 @@ app.include_router(tenant_router, prefix="/api/v1")
 app.include_router(user_router, prefix="/api/v1")
 app.include_router(incident_router, prefix="/api/v1")
 app.include_router(evidence_router, prefix="/api/v1")
+app.include_router(audit_router, prefix="/api/v1")

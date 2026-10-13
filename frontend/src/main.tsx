@@ -47,6 +47,26 @@ interface Evidence {
   created_at: string;
 }
 
+interface AuditEventItem {
+  id: string;
+  tenant_id: string | null;
+  actor_user_id: string | null;
+  actor_user_name: string | null;
+  actor_user_email: string | null;
+  actor_type: string;
+  action: string;
+  resource_type: string;
+  resource_id: string | null;
+  outcome: string;
+  occurred_at: string;
+  request_id: string | null;
+  source_ip: string | null;
+  user_agent: string | null;
+  details: Record<string, any>;
+  previous_hash: string | null;
+  event_hash: string | null;
+}
+
 interface Incident {
   id: string;
   tenant_id: string;
@@ -107,7 +127,18 @@ export function App() {
   const [authError, setAuthError] = useState<string | null>(null);
   const [authSuccess, setAuthSuccess] = useState<string | null>(null);
   const [authTab, setAuthTab] = useState<"login" | "register">("login");
-  const [activeSection, setActiveSection] = useState<"incidents" | "users" | "settings">("incidents");
+  const [activeSection, setActiveSection] = useState<"incidents" | "users" | "audit" | "settings">("incidents");
+
+  // Audit State
+  const [auditEvents, setAuditEvents] = useState<AuditEventItem[]>([]);
+  const [auditTotal, setAuditTotal] = useState(0);
+  const [auditPage, setAuditPage] = useState(1);
+  const [auditTotalPages, setAuditTotalPages] = useState(1);
+  const [auditActionFilter, setAuditActionFilter] = useState("");
+  const [auditOutcomeFilter, setAuditOutcomeFilter] = useState("");
+  const [auditResourceTypeFilter, setAuditResourceTypeFilter] = useState("");
+  const [auditVerification, setAuditVerification] = useState<{ is_valid: boolean; verified_count: number; details: string } | null>(null);
+  const [auditLoading, setAuditLoading] = useState(false);
 
   // Auth Forms
   const [loginEmail, setLoginEmail] = useState("");
@@ -632,6 +663,52 @@ export function App() {
     }
   };
 
+  // Audit Log Handlers
+  const loadAuditEvents = async () => {
+    setAuditLoading(true);
+    try {
+      const params = new URLSearchParams();
+      params.append("page", auditPage.toString());
+      params.append("page_size", "15");
+      if (auditActionFilter) params.append("action", auditActionFilter);
+      if (auditOutcomeFilter) params.append("outcome", auditOutcomeFilter);
+      if (auditResourceTypeFilter) params.append("resource_type", auditResourceTypeFilter);
+
+      const res = await apiCall(`/audit-events?${params.toString()}`);
+      if (res.ok) {
+        const data = await res.json();
+        setAuditEvents(data.items);
+        setAuditTotal(data.total);
+        setAuditTotalPages(data.total_pages);
+      }
+    } catch (err) {
+      console.error("Failed to load audit events", err);
+    } finally {
+      setAuditLoading(false);
+    }
+  };
+
+  const handleVerifyAuditChain = async () => {
+    try {
+      const res = await apiCall("/audit-events/verify-chain");
+      if (res.ok) {
+        const result = await res.json();
+        setAuditVerification(result);
+      } else {
+        const err = await res.json().catch(() => ({}));
+        alert(`Verification failed: ${err.detail || "Error verifying chain"}`);
+      }
+    } catch (err: any) {
+      alert(`Error verifying audit chain: ${err.message}`);
+    }
+  };
+
+  useEffect(() => {
+    if (activeSection === "audit" && token) {
+      loadAuditEvents();
+    }
+  }, [activeSection, auditPage, auditActionFilter, auditOutcomeFilter, auditResourceTypeFilter, token]);
+
   // View: Unauthenticated
   if (!token || !user) {
     return (
@@ -801,6 +878,12 @@ export function App() {
               Team Directory
             </button>
           )}
+          <button
+            className={`nav-link ${activeSection === "audit" ? "active" : ""}`}
+            onClick={() => setActiveSection("audit")}
+          >
+            Audit Trail
+          </button>
           <button
             className={`nav-link ${activeSection === "settings" ? "active" : ""}`}
             onClick={() => setActiveSection("settings")}
@@ -1116,6 +1199,193 @@ export function App() {
                 <button type="submit" className="primary-btn btn-sm">Update Password</button>
               </form>
             </div>
+          </div>
+        )}
+
+        {/* SECTION 4: AUDIT TRAIL & TAMPER-RESISTANT LOG VIEWER */}
+        {activeSection === "audit" && (
+          <div className="card full-width">
+            <div className="card-header-flex">
+              <div>
+                <h2>Immutable Security Audit Trail</h2>
+                <p className="field-hint" style={{ marginTop: "0.25rem" }}>
+                  Cryptographically linked, append-only security events and administrative actions for {tenant?.name || "Tenant"}.
+                </p>
+              </div>
+              <div className="audit-actions-bar">
+                <button
+                  type="button"
+                  className="secondary-btn btn-xs"
+                  onClick={handleVerifyAuditChain}
+                  title="Verify SHA-256 cryptographic hash chain"
+                >
+                  🔗 Verify Hash Chain
+                </button>
+                <button
+                  type="button"
+                  className="secondary-btn btn-xs"
+                  onClick={loadAuditEvents}
+                  disabled={auditLoading}
+                >
+                  {auditLoading ? "Refreshing..." : "↻ Refresh"}
+                </button>
+              </div>
+            </div>
+
+            {/* Cryptographic Chain Verification Banner */}
+            {auditVerification && (
+              <div className={`alert ${auditVerification.is_valid ? "alert-success" : "alert-error"}`} style={{ marginTop: "1rem" }}>
+                <strong>{auditVerification.is_valid ? "✓ Hash Chain Intact" : "⚠️ Cryptographic Tampering Detected"}</strong>
+                <p style={{ margin: "0.25rem 0 0 0", fontSize: "0.85rem" }}>{auditVerification.details}</p>
+              </div>
+            )}
+
+            {/* Audit Filters */}
+            <div className="audit-filter-bar" style={{ marginTop: "1.25rem" }}>
+              <div className="form-group">
+                <label>Action</label>
+                <input
+                  type="text"
+                  placeholder="Filter by action (e.g. LOGIN_SUCCESS)"
+                  value={auditActionFilter}
+                  onChange={(e) => { setAuditActionFilter(e.target.value); setAuditPage(1); }}
+                />
+              </div>
+
+              <div className="form-group">
+                <label>Outcome</label>
+                <select
+                  value={auditOutcomeFilter}
+                  onChange={(e) => { setAuditOutcomeFilter(e.target.value); setAuditPage(1); }}
+                >
+                  <option value="">All Outcomes</option>
+                  <option value="SUCCESS">SUCCESS</option>
+                  <option value="FAILURE">FAILURE</option>
+                  <option value="DENIED">DENIED</option>
+                </select>
+              </div>
+
+              <div className="form-group">
+                <label>Resource Type</label>
+                <select
+                  value={auditResourceTypeFilter}
+                  onChange={(e) => { setAuditResourceTypeFilter(e.target.value); setAuditPage(1); }}
+                >
+                  <option value="">All Resources</option>
+                  <option value="user">User</option>
+                  <option value="incident">Incident</option>
+                  <option value="incident_note">Incident Note</option>
+                  <option value="evidence">Evidence</option>
+                  <option value="tenant">Tenant</option>
+                </select>
+              </div>
+            </div>
+
+            {/* Audit Event Table */}
+            <div className="table-responsive" style={{ marginTop: "1rem" }}>
+              <table className="audit-table">
+                <thead>
+                  <tr>
+                    <th>Timestamp (UTC)</th>
+                    <th>Action</th>
+                    <th>Actor</th>
+                    <th>Resource</th>
+                    <th>Outcome</th>
+                    <th>Event Hash</th>
+                    <th>Metadata & Details</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {auditEvents.length === 0 ? (
+                    <tr>
+                      <td colSpan={7} className="empty-message">
+                        {auditLoading ? "Loading audit trail..." : "No audit events match the query criteria."}
+                      </td>
+                    </tr>
+                  ) : (
+                    auditEvents.map((ev) => (
+                      <tr key={ev.id}>
+                        <td style={{ whiteSpace: "nowrap" }}>
+                          <span style={{ fontSize: "0.8rem", color: "var(--text-muted)" }}>
+                            {new Date(ev.occurred_at).toLocaleString()}
+                          </span>
+                        </td>
+                        <td>
+                          <span className="audit-action-tag">
+                            {ev.action}
+                          </span>
+                        </td>
+                        <td>
+                          <div>
+                            <strong>{ev.actor_user_name || (ev.actor_type === "SYSTEM" ? "System" : "Anonymous")}</strong>
+                            {ev.actor_user_email && (
+                              <span style={{ display: "block", fontSize: "0.75rem", color: "var(--text-muted)" }}>
+                                {ev.actor_user_email}
+                              </span>
+                            )}
+                          </div>
+                        </td>
+                        <td>
+                          <div>
+                            <span className="category-tag">{ev.resource_type}</span>
+                            {ev.resource_id && (
+                              <span style={{ display: "block", fontSize: "0.75rem", color: "var(--text-muted)", marginTop: "0.2rem" }}>
+                                {ev.resource_id.length > 18 ? `${ev.resource_id.slice(0, 8)}...` : ev.resource_id}
+                              </span>
+                            )}
+                          </div>
+                        </td>
+                        <td>
+                          <span className={`badge ${ev.outcome === "SUCCESS" ? "badge-success" : ev.outcome === "DENIED" ? "sev-critical" : "badge-inactive"}`}>
+                            {ev.outcome}
+                          </span>
+                        </td>
+                        <td>
+                          {ev.event_hash ? (
+                            <code className="hash-code" title={ev.event_hash}>
+                              {ev.event_hash.slice(0, 10)}...
+                            </code>
+                          ) : (
+                            <span style={{ color: "var(--text-muted)" }}>—</span>
+                          )}
+                        </td>
+                        <td>
+                          <details className="audit-details-dropdown">
+                            <summary style={{ cursor: "pointer", fontSize: "0.8rem", color: "var(--accent-blue)" }}>
+                              View Metadata ({Object.keys(ev.details || {}).length} keys)
+                            </summary>
+                            <pre className="audit-details-pre">
+                              {JSON.stringify(ev.details, null, 2)}
+                            </pre>
+                          </details>
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+
+            {/* Audit Pagination Bar */}
+            {auditTotalPages > 1 && (
+              <div className="pagination-bar" style={{ marginTop: "1rem" }}>
+                <button
+                  className="secondary-btn btn-xs"
+                  disabled={auditPage <= 1}
+                  onClick={() => setAuditPage(auditPage - 1)}
+                >
+                  Previous
+                </button>
+                <span className="page-indicator">Page {auditPage} of {auditTotalPages} ({auditTotal} total events)</span>
+                <button
+                  className="secondary-btn btn-xs"
+                  disabled={auditPage >= auditTotalPages}
+                  onClick={() => setAuditPage(auditPage + 1)}
+                >
+                  Next
+                </button>
+              </div>
+            )}
           </div>
         )}
       </main>
