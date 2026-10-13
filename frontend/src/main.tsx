@@ -33,6 +33,20 @@ interface IncidentNote {
   created_at: string;
 }
 
+interface Evidence {
+  id: string;
+  tenant_id: string;
+  incident_id: string;
+  uploaded_by_id: string;
+  uploaded_by_name: string | null;
+  filename: string;
+  file_size_bytes: number;
+  sha256_hash: string;
+  mime_type: string;
+  description: string;
+  created_at: string;
+}
+
 interface Incident {
   id: string;
   tenant_id: string;
@@ -49,6 +63,7 @@ interface Incident {
   updated_at: string;
   resolved_at: string | null;
   notes: IncidentNote[];
+  evidence: Evidence[];
 }
 
 interface IncidentMetrics {
@@ -130,6 +145,13 @@ export function App() {
   // New Note
   const [newNoteContent, setNewNoteContent] = useState("");
   const [noteSubmitting, setNoteSubmitting] = useState(false);
+
+  // Evidence state
+  const [evidenceFile, setEvidenceFile] = useState<File | null>(null);
+  const [evidenceDescription, setEvidenceDescription] = useState("");
+  const [evidenceUploading, setEvidenceUploading] = useState(false);
+  const [evidenceError, setEvidenceError] = useState<string | null>(null);
+  const [evidenceSuccess, setEvidenceSuccess] = useState<string | null>(null);
 
   // Team management
   const [newUserName, setNewUserName] = useState("");
@@ -464,6 +486,80 @@ export function App() {
       alert(`Error adding note: ${err.message}`);
     } finally {
       setNoteSubmitting(false);
+    }
+  };
+
+  // Upload Evidence
+  const handleEvidenceUploadSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedIncident || !evidenceFile) return;
+    setEvidenceUploading(true);
+    setEvidenceError(null);
+    setEvidenceSuccess(null);
+
+    const formData = new FormData();
+    formData.append("file", evidenceFile);
+    if (evidenceDescription.trim()) {
+      formData.append("description", evidenceDescription.trim());
+    }
+
+    try {
+      const headers: Record<string, string> = {};
+      if (token) {
+        headers["Authorization"] = `Bearer ${token}`;
+      }
+      const res = await fetch(`${API_BASE}/incidents/${selectedIncident.id}/evidence`, {
+        method: "POST",
+        headers,
+        body: formData,
+      });
+
+      if (res.ok) {
+        setEvidenceFile(null);
+        setEvidenceDescription("");
+        setEvidenceSuccess("Evidence artifact uploaded and verified successfully.");
+        await handleSelectIncident(selectedIncident.id);
+      } else {
+        const err = await res.json().catch(() => ({}));
+        setEvidenceError(err.detail || "Evidence upload failed.");
+      }
+    } catch (err: any) {
+      setEvidenceError(err.message || "Network error uploading evidence.");
+    } finally {
+      setEvidenceUploading(false);
+    }
+  };
+
+  // Download Evidence
+  const handleEvidenceDownload = async (evidenceItem: Evidence) => {
+    if (!selectedIncident) return;
+    try {
+      const headers: Record<string, string> = {};
+      if (token) {
+        headers["Authorization"] = `Bearer ${token}`;
+      }
+      const res = await fetch(`${API_BASE}/incidents/${selectedIncident.id}/evidence/${evidenceItem.id}/download`, {
+        method: "GET",
+        headers,
+      });
+
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        alert(`Download failed: ${err.detail || "Unable to download evidence"}`);
+        return;
+      }
+
+      const blob = await res.blob();
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = evidenceItem.filename;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(url);
+    } catch (err: any) {
+      alert(`Error downloading evidence: ${err.message}`);
     }
   };
 
@@ -1232,6 +1328,92 @@ export function App() {
                     />
                     <button type="submit" className="primary-btn btn-sm" disabled={noteSubmitting}>
                       {noteSubmitting ? "Adding..." : "Log Investigation Note"}
+                    </button>
+                  </form>
+                )}
+              </div>
+
+              {/* Digital Evidence Management */}
+              <div className="evidence-section">
+                <h3>Digital Evidence & Forensic Artifacts ({selectedIncident.evidence?.length || 0})</h3>
+
+                {evidenceError && <div className="alert alert-error">{evidenceError}</div>}
+                {evidenceSuccess && <div className="alert alert-success">{evidenceSuccess}</div>}
+
+                <div className="evidence-list">
+                  {(!selectedIncident.evidence || selectedIncident.evidence.length === 0) ? (
+                    <p className="empty-message">No digital evidence artifacts attached to this incident.</p>
+                  ) : (
+                    selectedIncident.evidence.map((ev) => (
+                      <div key={ev.id} className="evidence-card">
+                        <div className="evidence-header">
+                          <div className="evidence-title-group">
+                            <span className="evidence-icon">📦</span>
+                            <div>
+                              <strong>{ev.filename}</strong>
+                              <span className="evidence-size">
+                                ({(ev.file_size_bytes / 1024).toFixed(1)} KB)
+                              </span>
+                            </div>
+                          </div>
+                          <button
+                            type="button"
+                            className="secondary-btn btn-xs download-btn"
+                            onClick={() => handleEvidenceDownload(ev)}
+                            title="Download evidence securely"
+                          >
+                            ⬇ Download
+                          </button>
+                        </div>
+
+                        {ev.description && <p className="evidence-desc">{ev.description}</p>}
+
+                        <div className="evidence-meta-row">
+                          <span className="evidence-hash">
+                            SHA-256: <code>{ev.sha256_hash}</code>
+                          </span>
+                          <span className="evidence-uploader">
+                            Uploaded by {ev.uploaded_by_name || "Analyst"} on {new Date(ev.created_at).toLocaleString()}
+                          </span>
+                        </div>
+                      </div>
+                    ))
+                  )}
+                </div>
+
+                {/* Upload Form (Analyst & Admin only) */}
+                {!isViewer && (
+                  <form onSubmit={handleEvidenceUploadSubmit} className="evidence-upload-form">
+                    <h4>Attach Evidence Artifact</h4>
+                    <p className="field-hint">
+                      Supported formats: PCAP, PCAPNG, ZIP, TAR, GZ, TXT, LOG, JSON, CSV (Max 10 MiB). Executable formats are blocked.
+                    </p>
+                    <div className="form-row">
+                      <div className="form-group" style={{ flex: 1 }}>
+                        <label>Select File</label>
+                        <input
+                          type="file"
+                          required
+                          onChange={(e) => setEvidenceFile(e.target.files?.[0] || null)}
+                        />
+                      </div>
+                      <div className="form-group" style={{ flex: 2 }}>
+                        <label>Description / Provenance Notes</label>
+                        <input
+                          type="text"
+                          placeholder="e.g. Memory dump, Wireshark packet capture, firewall syslogs"
+                          value={evidenceDescription}
+                          onChange={(e) => setEvidenceDescription(e.target.value)}
+                        />
+                      </div>
+                    </div>
+
+                    <button
+                      type="submit"
+                      className="primary-btn btn-sm"
+                      disabled={evidenceUploading || !evidenceFile}
+                    >
+                      {evidenceUploading ? "Verifying & Uploading..." : "Upload Evidence Artifact"}
                     </button>
                   </form>
                 )}

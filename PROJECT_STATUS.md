@@ -4,7 +4,7 @@
 
 The **Multi-Tenant Cybersecurity Incident Management Platform** (SentinelOps) is designed as a secure SaaS application for tracking, analyzing, and resolving cybersecurity incidents across isolated customer organizations.
 
-This status document reflects the completion of **Phase 3: Cybersecurity Incident Management & Investigation Workflow**.
+This status document reflects the completion of **Phase 4: Digital Evidence Management & Secure File Uploads**.
 
 ---
 
@@ -58,13 +58,15 @@ D:\CyberSecurity_Incident_Managment_Platform
 │   │       ├── 20260823_0001_create_users.py
 │   │       ├── 20260823_0002_add_tenants.py
 │   │       ├── 20261013_0003_add_roles_and_tenant_is_active.py
-│   │       └── 20261013_0004_create_incidents_and_notes.py
+│   │       ├── 20261013_0004_create_incidents_and_notes.py
+│   │       └── 20261013_0005_create_evidence.py
 │   ├── app/
 │   │   ├── __init__.py
 │   │   ├── main.py
 │   │   ├── api/
 │   │   │   ├── __init__.py
 │   │   │   ├── auth.py
+│   │   │   ├── evidence.py
 │   │   │   ├── health.py
 │   │   │   ├── incidents.py
 │   │   │   ├── tenants.py
@@ -79,20 +81,25 @@ D:\CyberSecurity_Incident_Managment_Platform
 │   │   │   └── auth.py
 │   │   ├── models/
 │   │   │   ├── __init__.py
+│   │   │   ├── evidence.py
 │   │   │   ├── incident.py
 │   │   │   ├── tenant.py
 │   │   │   └── user.py
 │   │   ├── schemas/
 │   │   │   ├── __init__.py
 │   │   │   ├── auth.py
+│   │   │   ├── evidence.py
 │   │   │   ├── incident.py
 │   │   │   ├── tenant.py
 │   │   │   └── user.py
 │   │   └── services/
+│   │       ├── __init__.py
+│   │       ├── evidence_service.py
 │   │       └── incident_service.py
 │   └── tests/
 │       ├── conftest.py
 │       ├── test_auth.py
+│       ├── test_evidence.py
 │       ├── test_health.py
 │       ├── test_incidents.py
 │       └── test_security_and_tenancy.py
@@ -208,22 +215,17 @@ tests/test_security_and_tenancy.py::test_tenant_admin_cannot_modify_other_tenant
 tests/test_security_and_tenancy.py::test_invalid_registration_data_rejected PASSED [ 96%]
 tests/test_security_and_tenancy.py::test_inactive_user_cannot_login_or_authenticate PASSED [100%]
 
-======================== 33 passed, 1 warning in 25.38s ========================
+======================== 54 passed, 1 warning in 35.31s ========================
 ```
 
 Frontend compilation test:
-- `docker compose exec frontend npm run build`: Built production bundle cleanly in 1.64s with zero errors.
+- `docker compose exec frontend npm run build`: Built production bundle cleanly in 1.16s with zero errors.
 
 ---
 
 ## 8. Recommended Next Implementation Phase
 
-**Phase 4: Evidence Management & Secure File Uploads**
-1. **Evidence Data Model**: `Evidence` entity (`id`, `tenant_id`, `incident_id`, `uploaded_by_id`, `filename`, `file_size`, `content_type`, `sha256_hash`, `storage_path`, `created_at`).
-2. **Alembic Migration**: `20261013_0005_create_evidence.py`.
-3. **Secure File Storage**: File validation (size limit `MAX_UPLOAD_SIZE`, MIME allow-list, magic bytes validation, SHA-256 calculation).
-4. **Evidence Endpoints**:
-   - `POST /api/v1/incidents/{id}/evidence`: Secure upload.
-   - `GET /api/v1/incidents/{id}/evidence`: List evidence attachments.
-   - `GET /api/v1/incidents/{id}/evidence/{evidence_id}/download`: Authorization-controlled download stream.
-5. **Isolation & Security Tests**: Verify cross-tenant download blocking, path traversal prevention, and hash integrity checks.
+**Phase 5: Real-Time Incident Notifications & Auditing**
+1. **Audit Log System**: Structured immutable activity records for tenant actions (logins, evidence uploads, status transitions, role modifications).
+2. **WebSockets / Server-Sent Events (SSE)**: Real-time broadcast of incident timeline updates and alert broadcasts to active SOC analysts.
+3. **Automated SIEM / Webhook Integrations**: Webhook triggers on critical incident escalations.

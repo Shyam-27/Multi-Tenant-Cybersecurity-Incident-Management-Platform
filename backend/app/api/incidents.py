@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session, selectinload
 
 from app.core.database import get_db
 from app.dependencies.auth import get_current_user, require_roles
+from app.models.evidence import Evidence
 from app.models.incident import (
     Incident,
     IncidentCategory,
@@ -15,6 +16,7 @@ from app.models.incident import (
     IncidentStatus,
 )
 from app.models.user import User, UserRole
+from app.schemas.evidence import EvidenceResponse
 from app.schemas.incident import (
     CreateIncidentRequest,
     CreateNoteRequest,
@@ -50,6 +52,22 @@ def _format_incident_response(incident: Incident) -> IncidentDetailResponse:
         )
         for n in incident.notes
     ]
+    evidence_responses = [
+        EvidenceResponse(
+            id=e.id,
+            tenant_id=e.tenant_id,
+            incident_id=e.incident_id,
+            uploaded_by_id=e.uploaded_by_id,
+            uploaded_by_name=e.uploaded_by.name if e.uploaded_by else None,
+            filename=e.filename,
+            file_size_bytes=e.file_size_bytes,
+            sha256_hash=e.sha256_hash,
+            mime_type=e.mime_type,
+            description=e.description,
+            created_at=e.created_at,
+        )
+        for e in incident.evidence
+    ]
 
     return IncidentDetailResponse(
         id=incident.id,
@@ -67,6 +85,7 @@ def _format_incident_response(incident: Incident) -> IncidentDetailResponse:
         updated_at=incident.updated_at,
         resolved_at=incident.resolved_at,
         notes=notes_responses,
+        evidence=evidence_responses,
     )
 
 
@@ -195,6 +214,7 @@ def list_incidents(
         selectinload(Incident.assigned_to),
         selectinload(Incident.created_by),
         selectinload(Incident.notes).selectinload(IncidentNote.author),
+        selectinload(Incident.evidence).selectinload(Evidence.uploaded_by),
     )
 
     # Scoping
@@ -261,6 +281,7 @@ def get_incident_by_id(
             selectinload(Incident.assigned_to),
             selectinload(Incident.created_by),
             selectinload(Incident.notes).selectinload(IncidentNote.author),
+            selectinload(Incident.evidence).selectinload(Evidence.uploaded_by),
         )
         .where(Incident.id == incident_id)
     )

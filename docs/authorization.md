@@ -41,7 +41,10 @@ SentinelOps enforces strict server-side Role-Based Access Control (RBAC) and mul
 | `/api/v1/incidents/{id}` (View) | GET | Allowed | Allowed (Own Org) | Allowed (Own Org) | Allowed (Own Org) |
 | `/api/v1/incidents/{id}` (Update) | PATCH | Allowed | Allowed (Own Org) | Allowed (Own Org) | **Forbidden (403)** |
 | `/api/v1/incidents/{id}/notes` | POST | Allowed | Allowed (Own Org) | Allowed (Own Org) | **Forbidden (403)** |
-| Cross-tenant `/incidents/{id}` | GET/PATCH/NOTES | Allowed | **Not Found (404)** | **Not Found (404)** | **Not Found (404)** |
+| `/api/v1/incidents/{id}/evidence` (List) | GET | Allowed (All/Filtered) | Allowed (Own Org) | Allowed (Own Org) | Allowed (Own Org) |
+| `/api/v1/incidents/{id}/evidence` (Upload) | POST | Allowed | Allowed (Own Org) | Allowed (Own Org) | **Forbidden (403)** |
+| `/api/v1/incidents/{id}/evidence/{eid}/download` | GET | Allowed | Allowed (Own Org) | Allowed (Own Org) | Allowed (Own Org) |
+| Cross-tenant `/incidents/{id}` | GET/PATCH/NOTES/EVIDENCE | Allowed | **Not Found (404)** | **Not Found (404)** | **Not Found (404)** |
 
 ---
 

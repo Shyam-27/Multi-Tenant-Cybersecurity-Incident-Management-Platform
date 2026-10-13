@@ -4,6 +4,7 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.models.incident import IncidentCategory, IncidentSeverity, IncidentStatus
+from app.schemas.evidence import EvidenceResponse
 
 
 class CreateIncidentRequest(BaseModel):
@@ -57,6 +58,7 @@ class IncidentDetailResponse(BaseModel):
     updated_at: datetime
     resolved_at: datetime | None = None
     notes: list[IncidentNoteResponse] = []
+    evidence: list[EvidenceResponse] = []
 
 
 class IncidentListResponse(BaseModel):

@@ -60,6 +60,12 @@ class Incident(Base):
         cascade="all, delete-orphan",
         order_by="IncidentNote.created_at.asc()",
     )
+    evidence: Mapped[list["Evidence"]] = relationship(
+        "Evidence",
+        back_populates="incident",
+        cascade="all, delete-orphan",
+        order_by="Evidence.created_at.asc()",
+    )
 
     __table_args__ = (
         Index("ix_incidents_tenant_status", "tenant_id", "status"),
