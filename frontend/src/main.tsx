@@ -96,6 +96,96 @@ interface IncidentMetrics {
   critical_and_high: number;
 }
 
+interface IOC {
+  id: string;
+  tenant_id: string;
+  type: string;
+  value: string;
+  normalized_value: string;
+  verdict: string;
+  severity: string;
+  confidence_score: number;
+  is_false_positive: boolean;
+  source: string;
+  first_seen: string;
+  last_seen: string;
+  last_enriched_at: string | null;
+  raw_enrichment: Record<string, any>;
+  tags: string[];
+  description: string;
+  created_at: string;
+  updated_at: string;
+}
+
+interface Destination {
+  id: string;
+  tenant_id: string;
+  name: string;
+  destination_type: string;
+  endpoint_url: string;
+  is_active: boolean;
+  subscribed_events: string[];
+  retry_limit: number;
+  timeout_seconds: number;
+  created_at: string;
+  updated_at: string;
+}
+
+interface WebhookDeliveryItem {
+  id: string;
+  tenant_id: string;
+  destination_id: string;
+  event_type: string;
+  payload: Record<string, any>;
+  status: string;
+  http_status: number | null;
+  error_message: string | null;
+  attempt_count: number;
+  latency_ms: number | null;
+  created_at: string;
+  completed_at: string | null;
+}
+
+interface Playbook {
+  id: string;
+  tenant_id: string;
+  name: string;
+  description: string;
+  trigger_type: string;
+  actions: string[];
+  is_enabled: boolean;
+  is_dry_run: boolean;
+  requires_approval: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+interface PlaybookApprovalItem {
+  id: string;
+  execution_id: string;
+  status: string;
+  requested_by_id: string;
+  decided_by_id: string | null;
+  decided_at: string | null;
+  notes: string | null;
+  created_at: string;
+}
+
+interface PlaybookExecutionItem {
+  id: string;
+  tenant_id: string;
+  playbook_id: string;
+  incident_id: string | null;
+  triggered_by_id: string | null;
+  status: string;
+  is_dry_run: boolean;
+  execution_log: any[];
+  started_at: string | null;
+  completed_at: string | null;
+  created_at: string;
+  approval: PlaybookApprovalItem | null;
+}
+
 const CATEGORIES = [
   "ACCOUNT_COMPROMISE",
   "DATA_EXFILTRATION",
@@ -127,7 +217,60 @@ export function App() {
   const [authError, setAuthError] = useState<string | null>(null);
   const [authSuccess, setAuthSuccess] = useState<string | null>(null);
   const [authTab, setAuthTab] = useState<"login" | "register">("login");
-  const [activeSection, setActiveSection] = useState<"incidents" | "users" | "audit" | "settings">("incidents");
+  const [activeSection, setActiveSection] = useState<
+    "incidents" | "threat-intel" | "webhooks" | "playbooks" | "users" | "audit" | "settings"
+  >("incidents");
+
+  // Threat Intel State
+  const [iocs, setIocs] = useState<IOC[]>([]);
+  const [iocTotal, setIocTotal] = useState(0);
+  const [iocPage, setIocPage] = useState(1);
+  const [iocTotalPages, setIocTotalPages] = useState(1);
+  const [iocSearch, setIocSearch] = useState("");
+  const [iocTypeFilter, setIocTypeFilter] = useState("");
+  const [iocVerdictFilter, setIocVerdictFilter] = useState("");
+  const [iocLoading, setIocLoading] = useState(false);
+  const [selectedIoc, setSelectedIoc] = useState<IOC | null>(null);
+  const [showCreateIocModal, setShowCreateIocModal] = useState(false);
+  const [newIocType, setNewIocType] = useState("IPV4");
+  const [newIocValue, setNewIocValue] = useState("");
+  const [newIocSeverity, setNewIocSeverity] = useState("MEDIUM");
+  const [newIocDescription, setNewIocDescription] = useState("");
+  const [newIocTags, setNewIocTags] = useState("");
+  const [iocActionMsg, setIocActionMsg] = useState<string | null>(null);
+  const [enrichingIocId, setEnrichingIocId] = useState<string | null>(null);
+
+  // SIEM & Webhook Destinations State
+  const [destinations, setDestinations] = useState<Destination[]>([]);
+  const [destLoading, setDestLoading] = useState(false);
+  const [deliveries, setDeliveries] = useState<WebhookDeliveryItem[]>([]);
+  const [deliveriesLoading, setDeliveriesLoading] = useState(false);
+  const [showCreateDestModal, setShowCreateDestModal] = useState(false);
+  const [newDestName, setNewDestName] = useState("");
+  const [newDestType, setNewDestType] = useState("SPLUNK_HEC");
+  const [newDestUrl, setNewDestUrl] = useState("");
+  const [newDestSecret, setNewDestSecret] = useState("");
+  const [newDestEvents, setNewDestEvents] = useState<string[]>([
+    "incident.created.critical",
+    "incident.status.changed",
+  ]);
+  const [destActionMsg, setDestActionMsg] = useState<string | null>(null);
+  const [testingDestId, setTestingDestId] = useState<string | null>(null);
+  const [destTestResult, setDestTestResult] = useState<{ id: string; success: boolean; message: string } | null>(null);
+
+  // Response Playbooks State
+  const [playbooks, setPlaybooks] = useState<Playbook[]>([]);
+  const [playbooksLoading, setPlaybooksLoading] = useState(false);
+  const [executions, setExecutions] = useState<PlaybookExecutionItem[]>([]);
+  const [executionsLoading, setExecutionsLoading] = useState(false);
+  const [selectedPlaybookToTrigger, setSelectedPlaybookToTrigger] = useState<Playbook | null>(null);
+  const [triggerIncidentId, setTriggerIncidentId] = useState("");
+  const [triggerParamUserId, setTriggerParamUserId] = useState("");
+  const [triggerParamTarget, setTriggerParamTarget] = useState("");
+  const [triggerDryRun, setTriggerDryRun] = useState(true);
+  const [playbookSubmitting, setPlaybookSubmitting] = useState(false);
+  const [playbookActionMsg, setPlaybookActionMsg] = useState<string | null>(null);
+  const [selectedExecutionDetails, setSelectedExecutionDetails] = useState<PlaybookExecutionItem | null>(null);
 
   // Audit State
   const [auditEvents, setAuditEvents] = useState<AuditEventItem[]>([]);
@@ -709,6 +852,308 @@ export function App() {
     }
   }, [activeSection, auditPage, auditActionFilter, auditOutcomeFilter, auditResourceTypeFilter, token]);
 
+  // Phase 6: Threat Intelligence Handlers
+  const loadIocs = async () => {
+    setIocLoading(true);
+    try {
+      const params = new URLSearchParams();
+      params.append("page", iocPage.toString());
+      params.append("page_size", "15");
+      if (iocTypeFilter) params.append("ioc_type", iocTypeFilter);
+      if (iocVerdictFilter) params.append("verdict", iocVerdictFilter);
+      if (iocSearch) params.append("search", iocSearch);
+
+      const res = await apiCall(`/iocs?${params.toString()}`);
+      if (res.ok) {
+        const data = await res.json();
+        setIocs(data.items);
+        setIocTotal(data.total);
+        setIocTotalPages(data.pages || 1);
+      }
+    } catch (err) {
+      console.error("Failed to load IOCs", err);
+    } finally {
+      setIocLoading(false);
+    }
+  };
+
+  const handleCreateIocSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setIocActionMsg(null);
+    try {
+      const tagsArr = newIocTags
+        .split(",")
+        .map((t) => t.trim())
+        .filter((t) => Boolean(t));
+      const res = await apiCall("/iocs", {
+        method: "POST",
+        body: JSON.stringify({
+          type: newIocType,
+          value: newIocValue.trim(),
+          severity: newIocSeverity,
+          description: newIocDescription.trim(),
+          tags: tagsArr,
+        }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.detail || "Failed to create indicator of compromise");
+      }
+      setShowCreateIocModal(false);
+      setNewIocValue("");
+      setNewIocDescription("");
+      setNewIocTags("");
+      await loadIocs();
+    } catch (err: any) {
+      setIocActionMsg(`Error: ${err.message}`);
+    }
+  };
+
+  const handleEnrichIoc = async (iocItem: IOC) => {
+    setEnrichingIocId(iocItem.id);
+    try {
+      const res = await apiCall(`/iocs/${iocItem.id}/enrich`, { method: "POST" });
+      if (res.ok) {
+        const updated = await res.json();
+        setIocs((prev) => prev.map((item) => (item.id === updated.id ? updated : item)));
+        if (selectedIoc && selectedIoc.id === updated.id) {
+          setSelectedIoc(updated);
+        }
+      } else {
+        const err = await res.json().catch(() => ({}));
+        alert(`Enrichment failed: ${err.detail || "Unknown error"}`);
+      }
+    } catch (err: any) {
+      alert(`Enrichment error: ${err.message}`);
+    } finally {
+      setEnrichingIocId(null);
+    }
+  };
+
+  const handleToggleFalsePositive = async (iocItem: IOC) => {
+    try {
+      const res = await apiCall(`/iocs/${iocItem.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ is_false_positive: !iocItem.is_false_positive }),
+      });
+      if (res.ok) {
+        const updated = await res.json();
+        setIocs((prev) => prev.map((item) => (item.id === updated.id ? updated : item)));
+        if (selectedIoc && selectedIoc.id === updated.id) {
+          setSelectedIoc(updated);
+        }
+      }
+    } catch (err: any) {
+      alert(`Failed to update indicator: ${err.message}`);
+    }
+  };
+
+  // Phase 6: SIEM & Webhook Destinations Handlers
+  const loadDestinations = async () => {
+    setDestLoading(true);
+    try {
+      const res = await apiCall("/destinations");
+      if (res.ok) {
+        const data = await res.json();
+        setDestinations(data);
+      }
+    } catch (err) {
+      console.error("Failed to load destinations", err);
+    } finally {
+      setDestLoading(false);
+    }
+  };
+
+  const loadDeliveries = async () => {
+    setDeliveriesLoading(true);
+    try {
+      const res = await apiCall("/destinations/deliveries/list?page=1&page_size=20");
+      if (res.ok) {
+        const data = await res.json();
+        setDeliveries(data.items || []);
+      }
+    } catch (err) {
+      console.error("Failed to load deliveries", err);
+    } finally {
+      setDeliveriesLoading(false);
+    }
+  };
+
+  const handleCreateDestinationSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setDestActionMsg(null);
+    try {
+      const res = await apiCall("/destinations", {
+        method: "POST",
+        body: JSON.stringify({
+          name: newDestName.trim(),
+          destination_type: newDestType,
+          endpoint_url: newDestUrl.trim(),
+          secret_token: newDestSecret.trim() || undefined,
+          subscribed_events: newDestEvents,
+          is_active: true,
+        }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.detail || "Failed to create webhook destination");
+      }
+      setShowCreateDestModal(false);
+      setNewDestName("");
+      setNewDestUrl("");
+      setNewDestSecret("");
+      await loadDestinations();
+    } catch (err: any) {
+      setDestActionMsg(`Error: ${err.message}`);
+    }
+  };
+
+  const handleTestDestination = async (destId: string) => {
+    setTestingDestId(destId);
+    setDestTestResult(null);
+    try {
+      const res = await apiCall(`/destinations/${destId}/test`, { method: "POST" });
+      const data = await res.json();
+      if (res.ok) {
+        setDestTestResult({
+          id: destId,
+          success: data.status === "SUCCESS",
+          message: `HTTP ${data.http_status} in ${data.latency_ms ? data.latency_ms.toFixed(1) : 0}ms - ${data.status}`,
+        });
+        await loadDeliveries();
+      } else {
+        setDestTestResult({
+          id: destId,
+          success: false,
+          message: data.detail || "Test ping failed",
+        });
+      }
+    } catch (err: any) {
+      setDestTestResult({
+        id: destId,
+        success: false,
+        message: err.message || "Network error",
+      });
+    } finally {
+      setTestingDestId(null);
+    }
+  };
+
+  const handleDeleteDestination = async (destId: string) => {
+    if (!confirm("Are you sure you want to delete this notification destination?")) return;
+    try {
+      const res = await apiCall(`/destinations/${destId}`, { method: "DELETE" });
+      if (res.ok) {
+        setDestinations((prev) => prev.filter((d) => d.id !== destId));
+      }
+    } catch (err: any) {
+      alert(`Failed to delete: ${err.message}`);
+    }
+  };
+
+  // Phase 6: Response Playbook Handlers
+  const loadPlaybooks = async () => {
+    setPlaybooksLoading(true);
+    try {
+      const res = await apiCall("/playbooks");
+      if (res.ok) {
+        const data = await res.json();
+        setPlaybooks(data);
+      }
+    } catch (err) {
+      console.error("Failed to load playbooks", err);
+    } finally {
+      setPlaybooksLoading(false);
+    }
+  };
+
+  const loadExecutions = async () => {
+    setExecutionsLoading(true);
+    try {
+      const res = await apiCall("/playbooks/executions/list?page=1&page_size=20");
+      if (res.ok) {
+        const data = await res.json();
+        setExecutions(data.items || []);
+      }
+    } catch (err) {
+      console.error("Failed to load executions", err);
+    } finally {
+      setExecutionsLoading(false);
+    }
+  };
+
+  const handleTriggerPlaybookSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedPlaybookToTrigger) return;
+    setPlaybookSubmitting(true);
+    setPlaybookActionMsg(null);
+    try {
+      const params: Record<string, any> = {};
+      if (triggerParamUserId) params["user_id"] = triggerParamUserId.trim();
+      if (triggerParamTarget) {
+        params["hostname"] = triggerParamTarget.trim();
+        params["ip"] = triggerParamTarget.trim();
+      }
+
+      const res = await apiCall(`/playbooks/${selectedPlaybookToTrigger.id}/execute`, {
+        method: "POST",
+        body: JSON.stringify({
+          incident_id: triggerIncidentId || undefined,
+          parameters: params,
+          override_dry_run: triggerDryRun,
+        }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.detail || "Failed to trigger playbook");
+      }
+      const execution = await res.json();
+      setSelectedPlaybookToTrigger(null);
+      setTriggerParamUserId("");
+      setTriggerParamTarget("");
+      setTriggerIncidentId("");
+      await loadExecutions();
+      if (execution.status === "PENDING_APPROVAL") {
+        alert("Playbook execution initiated! Dual authorization is required — an administrator must approve it.");
+      }
+    } catch (err: any) {
+      setPlaybookActionMsg(`Error: ${err.message}`);
+    } finally {
+      setPlaybookSubmitting(false);
+    }
+  };
+
+  const handleDecideApproval = async (executionId: string, approve: boolean) => {
+    try {
+      const endpoint = `/playbooks/executions/${executionId}/${approve ? "approve" : "reject"}`;
+      const res = await apiCall(endpoint, {
+        method: "POST",
+        body: JSON.stringify({ notes: approve ? "Approved by SOC Admin" : "Rejected by SOC Admin" }),
+      });
+      if (res.ok) {
+        await loadExecutions();
+      } else {
+        const err = await res.json().catch(() => ({}));
+        alert(`Decision error: ${err.detail || "Unable to process decision"}`);
+      }
+    } catch (err: any) {
+      alert(`Decision error: ${err.message}`);
+    }
+  };
+
+  useEffect(() => {
+    if (!token) return;
+    if (activeSection === "threat-intel") {
+      loadIocs();
+    } else if (activeSection === "webhooks") {
+      loadDestinations();
+      loadDeliveries();
+    } else if (activeSection === "playbooks") {
+      loadPlaybooks();
+      loadExecutions();
+    }
+  }, [activeSection, iocPage, iocTypeFilter, iocVerdictFilter, token]);
+
   // View: Unauthenticated
   if (!token || !user) {
     return (
@@ -869,6 +1314,24 @@ export function App() {
             onClick={() => setActiveSection("incidents")}
           >
             Incidents
+          </button>
+          <button
+            className={`nav-link ${activeSection === "threat-intel" ? "active" : ""}`}
+            onClick={() => setActiveSection("threat-intel")}
+          >
+            Threat Intel
+          </button>
+          <button
+            className={`nav-link ${activeSection === "webhooks" ? "active" : ""}`}
+            onClick={() => setActiveSection("webhooks")}
+          >
+            SIEM & Webhooks
+          </button>
+          <button
+            className={`nav-link ${activeSection === "playbooks" ? "active" : ""}`}
+            onClick={() => setActiveSection("playbooks")}
+          >
+            Playbooks
           </button>
           {(user.role === "TENANT_ADMIN" || user.role === "SUPER_ADMIN") && (
             <button
@@ -1388,6 +1851,590 @@ export function App() {
             )}
           </div>
         )}
+
+        {/* SECTION 5: THREAT INTELLIGENCE & IOCS */}
+        {activeSection === "threat-intel" && (
+          <div className="card full-width">
+            <div className="card-header-flex">
+              <div>
+                <h2>Threat Intelligence & Indicators of Compromise (IOC)</h2>
+                <p className="field-hint" style={{ marginTop: "0.25rem" }}>
+                  Tenant-scoped threat feed aggregator and indicator management with multi-provider reputation scoring.
+                </p>
+              </div>
+              <div className="audit-actions-bar">
+                {!isViewer && (
+                  <button
+                    type="button"
+                    className="primary-btn btn-xs"
+                    onClick={() => { setIocActionMsg(null); setShowCreateIocModal(true); }}
+                  >
+                    + Add Indicator
+                  </button>
+                )}
+                <button
+                  type="button"
+                  className="secondary-btn btn-xs"
+                  onClick={loadIocs}
+                  disabled={iocLoading}
+                >
+                  {iocLoading ? "Refreshing..." : "↻ Refresh"}
+                </button>
+              </div>
+            </div>
+
+            {/* Filter & Search Bar */}
+            <div className="audit-filter-bar" style={{ marginTop: "1.25rem" }}>
+              <div className="form-group">
+                <label>Search Indicator Value</label>
+                <input
+                  type="text"
+                  placeholder="e.g. 198.51.100.42, malicious.com, sha256..."
+                  value={iocSearch}
+                  onChange={(e) => setIocSearch(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === "Enter") { setIocPage(1); loadIocs(); } }}
+                />
+              </div>
+
+              <div className="form-group">
+                <label>Indicator Type</label>
+                <select
+                  value={iocTypeFilter}
+                  onChange={(e) => { setIocTypeFilter(e.target.value); setIocPage(1); }}
+                >
+                  <option value="">All Types</option>
+                  <option value="IPV4">IPv4 Address</option>
+                  <option value="IPV6">IPv6 Address</option>
+                  <option value="DOMAIN">Domain</option>
+                  <option value="URL">URL</option>
+                  <option value="SHA256">SHA-256 Hash</option>
+                  <option value="MD5">MD5 Hash</option>
+                </select>
+              </div>
+
+              <div className="form-group">
+                <label>Verdict</label>
+                <select
+                  value={iocVerdictFilter}
+                  onChange={(e) => { setIocVerdictFilter(e.target.value); setIocPage(1); }}
+                >
+                  <option value="">All Verdicts</option>
+                  <option value="MALICIOUS">Malicious</option>
+                  <option value="SUSPICIOUS">Suspicious</option>
+                  <option value="BENIGN">Benign</option>
+                  <option value="UNKNOWN">Unknown</option>
+                </select>
+              </div>
+            </div>
+
+            {/* IOC Table */}
+            <div className="table-responsive" style={{ marginTop: "1rem" }}>
+              <table className="audit-table">
+                <thead>
+                  <tr>
+                    <th>Indicator Value</th>
+                    <th>Type</th>
+                    <th>Verdict</th>
+                    <th>Confidence</th>
+                    <th>Severity</th>
+                    <th>False Positive</th>
+                    <th>Last Enriched</th>
+                    <th>Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {iocs.length === 0 ? (
+                    <tr>
+                      <td colSpan={8} className="empty-message">
+                        {iocLoading ? "Loading threat indicators..." : "No indicators of compromise recorded yet."}
+                      </td>
+                    </tr>
+                  ) : (
+                    iocs.map((ioc) => (
+                      <tr key={ioc.id}>
+                        <td>
+                          <div>
+                            <strong style={{ fontFamily: "monospace", color: "#38bdf8" }}>{ioc.value}</strong>
+                            {ioc.description && (
+                              <p style={{ fontSize: "0.75rem", color: "var(--text-muted)", margin: "0.2rem 0 0 0" }}>
+                                {ioc.description}
+                              </p>
+                            )}
+                          </div>
+                        </td>
+                        <td>
+                          <span className="category-tag">{ioc.type}</span>
+                        </td>
+                        <td>
+                          <span className={`verdict-badge verdict-${ioc.verdict.toLowerCase()}`}>
+                            {ioc.verdict}
+                          </span>
+                        </td>
+                        <td>
+                          <div className="confidence-bar-wrapper">
+                            <div className="confidence-bar">
+                              <div
+                                className="confidence-fill"
+                                style={{
+                                  width: `${Math.round(ioc.confidence_score * 100)}%`,
+                                  background:
+                                    ioc.verdict === "MALICIOUS"
+                                      ? "var(--accent-rose)"
+                                      : ioc.verdict === "SUSPICIOUS"
+                                      ? "var(--accent-amber)"
+                                      : "var(--accent-emerald)",
+                                }}
+                              />
+                            </div>
+                            <span style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>
+                              {Math.round(ioc.confidence_score * 100)}%
+                            </span>
+                          </div>
+                        </td>
+                        <td>
+                          <span className={`badge sev-${ioc.severity.toLowerCase()}`}>
+                            {ioc.severity}
+                          </span>
+                        </td>
+                        <td>
+                          <button
+                            type="button"
+                            className={`secondary-btn btn-xs ${ioc.is_false_positive ? "badge-inactive" : ""}`}
+                            onClick={() => handleToggleFalsePositive(ioc)}
+                            disabled={isViewer}
+                          >
+                            {ioc.is_false_positive ? "⚠️ Yes" : "No"}
+                          </button>
+                        </td>
+                        <td>
+                          <span style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>
+                            {ioc.last_enriched_at ? new Date(ioc.last_enriched_at).toLocaleString() : "Never"}
+                          </span>
+                        </td>
+                        <td>
+                          <div style={{ display: "flex", gap: "0.35rem" }}>
+                            <button
+                              type="button"
+                              className="secondary-btn btn-xs"
+                              onClick={() => setSelectedIoc(ioc)}
+                            >
+                              Inspect
+                            </button>
+                            {!isViewer && (
+                              <button
+                                type="button"
+                                className="secondary-btn btn-xs"
+                                onClick={() => handleEnrichIoc(ioc)}
+                                disabled={enrichingIocId === ioc.id}
+                              >
+                                {enrichingIocId === ioc.id ? "Enriching..." : "Enrich"}
+                              </button>
+                            )}
+                          </div>
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+
+            {/* IOC Pagination */}
+            {iocTotalPages > 1 && (
+              <div className="pagination-bar" style={{ marginTop: "1rem" }}>
+                <button
+                  className="secondary-btn btn-xs"
+                  disabled={iocPage <= 1}
+                  onClick={() => setIocPage(iocPage - 1)}
+                >
+                  Previous
+                </button>
+                <span className="page-indicator">Page {iocPage} of {iocTotalPages} ({iocTotal} indicators)</span>
+                <button
+                  className="secondary-btn btn-xs"
+                  disabled={iocPage >= iocTotalPages}
+                  onClick={() => setIocPage(iocPage + 1)}
+                >
+                  Next
+                </button>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* SECTION 6: SIEM & WEBHOOK DESTINATIONS */}
+        {activeSection === "webhooks" && (
+          <div className="card full-width">
+            <div className="card-header-flex">
+              <div>
+                <h2>SIEM & Webhook Alerting Destinations</h2>
+                <p className="field-hint" style={{ marginTop: "0.25rem" }}>
+                  Real-time webhook notifications and SIEM ingestion pipeline for Splunk HEC, Elastic SIEM, MS Teams, and Slack.
+                </p>
+              </div>
+              <div className="audit-actions-bar">
+                {(user.role === "TENANT_ADMIN" || user.role === "SUPER_ADMIN") && (
+                  <button
+                    type="button"
+                    className="primary-btn btn-xs"
+                    onClick={() => { setDestActionMsg(null); setShowCreateDestModal(true); }}
+                  >
+                    + Register Destination
+                  </button>
+                )}
+                <button
+                  type="button"
+                  className="secondary-btn btn-xs"
+                  onClick={() => { loadDestinations(); loadDeliveries(); }}
+                  disabled={destLoading}
+                >
+                  {destLoading ? "Refreshing..." : "↻ Refresh"}
+                </button>
+              </div>
+            </div>
+
+            {/* Test result banner */}
+            {destTestResult && (
+              <div
+                className={`alert ${destTestResult.success ? "alert-success" : "alert-error"}`}
+                style={{ marginTop: "1rem" }}
+              >
+                <strong>{destTestResult.success ? "✓ Test Ping Successful" : "✕ Test Ping Failed"}</strong>
+                <p style={{ margin: "0.25rem 0 0 0", fontSize: "0.85rem" }}>{destTestResult.message}</p>
+              </div>
+            )}
+
+            {/* Destination Cards */}
+            <div className="destinations-grid">
+              {destinations.length === 0 ? (
+                <p className="empty-message">No SIEM or webhook destinations configured. Click &quot;Register Destination&quot; to configure one.</p>
+              ) : (
+                destinations.map((dest) => (
+                  <div key={dest.id} className="dest-card">
+                    <div className="dest-header">
+                      <div>
+                        <div className="dest-title">{dest.name}</div>
+                        <span className="dest-type-tag">{dest.destination_type}</span>
+                      </div>
+                      <span className={`badge ${dest.is_active ? "badge-success" : "badge-inactive"}`}>
+                        {dest.is_active ? "ACTIVE" : "INACTIVE"}
+                      </span>
+                    </div>
+
+                    <div className="dest-url-box">
+                      {dest.endpoint_url}
+                    </div>
+
+                    <div>
+                      <span className="meta-label">Subscribed Events</span>
+                      <div className="dest-events-row" style={{ marginTop: "0.3rem" }}>
+                        {dest.subscribed_events.map((ev) => (
+                          <span key={ev} className="event-pill">{ev}</span>
+                        ))}
+                      </div>
+                    </div>
+
+                    <div className="dest-actions">
+                      <button
+                        type="button"
+                        className="secondary-btn btn-xs"
+                        onClick={() => handleTestDestination(dest.id)}
+                        disabled={testingDestId === dest.id}
+                      >
+                        {testingDestId === dest.id ? "Pinging..." : "⚡ Test Ping"}
+                      </button>
+                      {(user.role === "TENANT_ADMIN" || user.role === "SUPER_ADMIN") && (
+                        <button
+                          type="button"
+                          className="secondary-btn btn-xs"
+                          style={{ color: "var(--accent-rose)", borderColor: "rgba(244, 63, 94, 0.4)" }}
+                          onClick={() => handleDeleteDestination(dest.id)}
+                        >
+                          Delete
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+
+            {/* Delivery History */}
+            <div style={{ marginTop: "2rem" }}>
+              <h3>Recent Webhook Deliveries & Audit Logs</h3>
+              <div className="table-responsive" style={{ marginTop: "0.75rem" }}>
+                <table className="audit-table">
+                  <thead>
+                    <tr>
+                      <th>Dispatched At</th>
+                      <th>Event</th>
+                      <th>HTTP Code</th>
+                      <th>Latency</th>
+                      <th>Attempts</th>
+                      <th>Status</th>
+                      <th>Error</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {deliveries.length === 0 ? (
+                      <tr>
+                        <td colSpan={7} className="empty-message">
+                          {deliveriesLoading ? "Loading dispatch logs..." : "No recent webhook deliveries recorded."}
+                        </td>
+                      </tr>
+                    ) : (
+                      deliveries.map((del) => (
+                        <tr key={del.id}>
+                          <td>
+                            <span style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>
+                              {new Date(del.created_at).toLocaleString()}
+                            </span>
+                          </td>
+                          <td>
+                            <span className="category-tag">{del.event_type}</span>
+                          </td>
+                          <td>
+                            <code>{del.http_status ?? "—"}</code>
+                          </td>
+                          <td>
+                            <span style={{ fontSize: "0.75rem" }}>
+                              {del.latency_ms ? `${del.latency_ms.toFixed(0)} ms` : "—"}
+                            </span>
+                          </td>
+                          <td>{del.attempt_count}</td>
+                          <td>
+                            <span className={`badge ${del.status === "SUCCESS" ? "badge-success" : del.status === "PENDING" ? "badge-inactive" : "sev-critical"}`}>
+                              {del.status}
+                            </span>
+                          </td>
+                          <td>
+                            <span style={{ fontSize: "0.75rem", color: "var(--accent-rose)" }}>
+                              {del.error_message || "—"}
+                            </span>
+                          </td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* SECTION 7: RESPONSE PLAYBOOKS */}
+        {activeSection === "playbooks" && (
+          <div className="card full-width">
+            <div className="card-header-flex">
+              <div>
+                <h2>Automated Incident Response Playbooks</h2>
+                <p className="field-hint" style={{ marginTop: "0.25rem" }}>
+                  Execution engine with safety simulations (dry-run), credential revocation, network isolation, and dual-authorization approvals.
+                </p>
+              </div>
+              <div className="audit-actions-bar">
+                <button
+                  type="button"
+                  className="secondary-btn btn-xs"
+                  onClick={() => { loadPlaybooks(); loadExecutions(); }}
+                  disabled={playbooksLoading}
+                >
+                  {playbooksLoading ? "Refreshing..." : "↻ Refresh"}
+                </button>
+              </div>
+            </div>
+
+            {/* Pending Approvals Section */}
+            {executions.filter((e) => e.status === "PENDING_APPROVAL").length > 0 && (
+              <div className="approvals-banner" style={{ marginTop: "1.25rem" }}>
+                <div className="approvals-header">
+                  <div className="approvals-title">
+                    <span>🛡️</span>
+                    <span>
+                      Pending Dual-Authorization Approvals ({executions.filter((e) => e.status === "PENDING_APPROVAL").length})
+                    </span>
+                  </div>
+                </div>
+                <p style={{ fontSize: "0.8rem", color: "var(--text-muted)", margin: "0 0 0.5rem 0" }}>
+                  High-impact actions require review by a secondary administrator prior to production execution.
+                </p>
+                {executions
+                  .filter((e) => e.status === "PENDING_APPROVAL")
+                  .map((exec) => {
+                    const pb = playbooks.find((p) => p.id === exec.playbook_id);
+                    const isSelfRequest = exec.approval?.requested_by_id === user.id;
+                    return (
+                      <div key={exec.id} className="approval-card-item">
+                        <div>
+                          <strong>{pb?.name || "Response Playbook"}</strong>
+                          <span style={{ display: "block", fontSize: "0.75rem", color: "var(--text-muted)" }}>
+                            Execution ID: <code>{exec.id.slice(0, 8)}...</code> | Requested at {new Date(exec.created_at).toLocaleString()}
+                          </span>
+                        </div>
+                        <div style={{ display: "flex", gap: "0.5rem", alignItems: "center" }}>
+                          {isSelfRequest ? (
+                            <span style={{ fontSize: "0.75rem", color: "var(--accent-amber)" }}>
+                              ⚠️ Anti-Self-Approval: Awaiting peer admin
+                            </span>
+                          ) : (
+                            <>
+                              <button
+                                type="button"
+                                className="primary-btn btn-xs"
+                                style={{ background: "var(--accent-emerald)" }}
+                                onClick={() => handleDecideApproval(exec.id, true)}
+                              >
+                                ✓ Approve Execution
+                              </button>
+                              <button
+                                type="button"
+                                className="secondary-btn btn-xs"
+                                style={{ color: "var(--accent-rose)" }}
+                                onClick={() => handleDecideApproval(exec.id, false)}
+                              >
+                                ✕ Reject
+                              </button>
+                            </>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+              </div>
+            )}
+
+            {/* Playbook Library */}
+            <h3 style={{ marginTop: "1.5rem" }}>Playbook Library</h3>
+            <div className="playbooks-grid">
+              {playbooks.length === 0 ? (
+                <p className="empty-message">No response playbooks configured.</p>
+              ) : (
+                playbooks.map((pb) => (
+                  <div key={pb.id} className="playbook-card">
+                    <div className="playbook-header">
+                      <div>
+                        <div className="playbook-name">{pb.name}</div>
+                        <p className="playbook-desc">{pb.description}</p>
+                      </div>
+                    </div>
+
+                    <div>
+                      <span className="meta-label">Actions</span>
+                      <div className="actions-badge-list" style={{ marginTop: "0.3rem" }}>
+                        {pb.actions.map((act) => (
+                          <span key={act} className="action-pill">{act}</span>
+                        ))}
+                      </div>
+                    </div>
+
+                    <div style={{ display: "flex", gap: "0.4rem", flexWrap: "wrap" }}>
+                      <span className={pb.is_dry_run ? "dry-run-pill" : "action-pill"}>
+                        {pb.is_dry_run ? "Simulation (Dry Run)" : "Live Execution"}
+                      </span>
+                      {pb.requires_approval && (
+                        <span className="approval-pill">Dual Auth Required</span>
+                      )}
+                    </div>
+
+                    <div style={{ marginTop: "auto", paddingTop: "0.75rem", borderTop: "1px solid rgba(255, 255, 255, 0.05)" }}>
+                      {!isViewer && (
+                        <button
+                          type="button"
+                          className="primary-btn btn-xs"
+                          onClick={() => {
+                            setSelectedPlaybookToTrigger(pb);
+                            setTriggerDryRun(pb.is_dry_run);
+                            setPlaybookActionMsg(null);
+                          }}
+                        >
+                          ▶ Trigger Playbook
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+
+            {/* Execution History */}
+            <div style={{ marginTop: "2rem" }}>
+              <h3>Execution Run History</h3>
+              <div className="table-responsive" style={{ marginTop: "0.75rem" }}>
+                <table className="audit-table">
+                  <thead>
+                    <tr>
+                      <th>Initiated At</th>
+                      <th>Playbook</th>
+                      <th>Mode</th>
+                      <th>Status</th>
+                      <th>Completed</th>
+                      <th>Log & Details</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {executions.length === 0 ? (
+                      <tr>
+                        <td colSpan={6} className="empty-message">
+                          {executionsLoading ? "Loading executions..." : "No playbook executions recorded yet."}
+                        </td>
+                      </tr>
+                    ) : (
+                      executions.map((exec) => {
+                        const pb = playbooks.find((p) => p.id === exec.playbook_id);
+                        return (
+                          <tr key={exec.id}>
+                            <td>
+                              <span style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>
+                                {new Date(exec.created_at).toLocaleString()}
+                              </span>
+                            </td>
+                            <td>
+                              <strong>{pb?.name || exec.playbook_id.slice(0, 8)}</strong>
+                            </td>
+                            <td>
+                              <span className={exec.is_dry_run ? "dry-run-pill" : "action-pill"}>
+                                {exec.is_dry_run ? "DRY RUN" : "LIVE"}
+                              </span>
+                            </td>
+                            <td>
+                              <span
+                                className={`badge ${
+                                  exec.status === "SUCCESS"
+                                    ? "badge-success"
+                                    : exec.status === "PENDING_APPROVAL"
+                                    ? "badge-inactive"
+                                    : exec.status === "FAILED"
+                                    ? "sev-critical"
+                                    : "badge-inactive"
+                                }`}
+                              >
+                                {exec.status}
+                              </span>
+                            </td>
+                            <td>
+                              <span style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>
+                                {exec.completed_at ? new Date(exec.completed_at).toLocaleString() : "—"}
+                              </span>
+                            </td>
+                            <td>
+                              <button
+                                type="button"
+                                className="secondary-btn btn-xs"
+                                onClick={() => setSelectedExecutionDetails(exec)}
+                              >
+                                View Log ({exec.execution_log?.length || 0} steps)
+                              </button>
+                            </td>
+                          </tr>
+                        );
+                      })
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        )}
       </main>
 
       {/* MODAL 1: CREATE INCIDENT */}
@@ -1688,6 +2735,547 @@ export function App() {
                   </form>
                 )}
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL 3: CREATE INDICATOR OF COMPROMISE */}
+      {showCreateIocModal && (
+        <div className="modal-overlay" onClick={() => setShowCreateIocModal(false)}>
+          <div className="modal-card" onClick={(e) => e.stopPropagation()}>
+            <header className="modal-header">
+              <h2>Add Threat Indicator (IOC)</h2>
+              <button className="close-btn" onClick={() => setShowCreateIocModal(false)}>✕</button>
+            </header>
+
+            {iocActionMsg && <div className="alert alert-error">{iocActionMsg}</div>}
+
+            <form onSubmit={handleCreateIocSubmit} className="form-stack">
+              <div className="form-row">
+                <div className="form-group">
+                  <label>Indicator Type *</label>
+                  <select value={newIocType} onChange={(e) => setNewIocType(e.target.value)}>
+                    <option value="IPV4">IPv4 Address</option>
+                    <option value="IPV6">IPv6 Address</option>
+                    <option value="DOMAIN">Domain Name</option>
+                    <option value="URL">Full URL</option>
+                    <option value="SHA256">SHA-256 Hash</option>
+                    <option value="MD5">MD5 Hash</option>
+                  </select>
+                </div>
+                <div className="form-group">
+                  <label>Severity</label>
+                  <select value={newIocSeverity} onChange={(e) => setNewIocSeverity(e.target.value)}>
+                    <option value="LOW">LOW</option>
+                    <option value="MEDIUM">MEDIUM</option>
+                    <option value="HIGH">HIGH</option>
+                    <option value="CRITICAL">CRITICAL</option>
+                  </select>
+                </div>
+              </div>
+
+              <div className="form-group">
+                <label>Indicator Value *</label>
+                <input
+                  type="text"
+                  required
+                  placeholder={newIocType === "IPV4" ? "198.51.100.42" : newIocType === "DOMAIN" ? "c2-command.evil.org" : "Indicator value..."}
+                  value={newIocValue}
+                  onChange={(e) => setNewIocValue(e.target.value)}
+                />
+              </div>
+
+              <div className="form-group">
+                <label>Description & Intelligence Context</label>
+                <input
+                  type="text"
+                  placeholder="e.g. Cobalt Strike Beacon C2 IP observed in phishing attachment"
+                  value={newIocDescription}
+                  onChange={(e) => setNewIocDescription(e.target.value)}
+                />
+              </div>
+
+              <div className="form-group">
+                <label>Tags (comma-separated)</label>
+                <input
+                  type="text"
+                  placeholder="c2, cobalt-strike, apt29, ransomware"
+                  value={newIocTags}
+                  onChange={(e) => setNewIocTags(e.target.value)}
+                />
+              </div>
+
+              <div className="modal-footer">
+                <button type="button" className="secondary-btn" onClick={() => setShowCreateIocModal(false)}>
+                  Cancel
+                </button>
+                <button type="submit" className="primary-btn">
+                  Record Indicator
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL 4: IOC DETAIL & MULTI-PROVIDER ENRICHMENT DRAWER */}
+      {selectedIoc && (
+        <div className="modal-overlay" onClick={() => setSelectedIoc(null)}>
+          <div className="drawer-card" onClick={(e) => e.stopPropagation()}>
+            <header className="modal-header">
+              <div>
+                <span className={`verdict-badge verdict-${selectedIoc.verdict.toLowerCase()}`}>
+                  {selectedIoc.verdict}
+                </span>{" "}
+                <span className={`badge sev-${selectedIoc.severity.toLowerCase()}`}>
+                  {selectedIoc.severity}
+                </span>
+                <h2 style={{ marginTop: "0.5rem", fontFamily: "monospace", color: "#38bdf8" }}>
+                  {selectedIoc.value}
+                </h2>
+              </div>
+              <button className="close-btn" onClick={() => setSelectedIoc(null)}>✕</button>
+            </header>
+
+            <div className="drawer-body">
+              <div className="incident-meta-box">
+                <div className="meta-grid">
+                  <div>
+                    <span className="meta-label">Type</span>
+                    <p><strong>{selectedIoc.type}</strong></p>
+                  </div>
+                  <div>
+                    <span className="meta-label">Normalized Value</span>
+                    <p style={{ fontFamily: "monospace", fontSize: "0.8rem" }}>{selectedIoc.normalized_value}</p>
+                  </div>
+                  <div>
+                    <span className="meta-label">Confidence Score</span>
+                    <p><strong>{Math.round(selectedIoc.confidence_score * 100)}%</strong></p>
+                  </div>
+                  <div>
+                    <span className="meta-label">False Positive</span>
+                    <p>{selectedIoc.is_false_positive ? "⚠️ Marked False Positive" : "No"}</p>
+                  </div>
+                </div>
+
+                <div className="meta-grid" style={{ marginTop: "0.75rem" }}>
+                  <div>
+                    <span className="meta-label">First Seen</span>
+                    <p>{new Date(selectedIoc.first_seen).toLocaleString()}</p>
+                  </div>
+                  <div>
+                    <span className="meta-label">Last Seen</span>
+                    <p>{new Date(selectedIoc.last_seen).toLocaleString()}</p>
+                  </div>
+                  <div>
+                    <span className="meta-label">Last Enriched</span>
+                    <p>{selectedIoc.last_enriched_at ? new Date(selectedIoc.last_enriched_at).toLocaleString() : "Never Enriched"}</p>
+                  </div>
+                  <div>
+                    <span className="meta-label">Source</span>
+                    <p>{selectedIoc.source}</p>
+                  </div>
+                </div>
+
+                {!isViewer && (
+                  <div style={{ marginTop: "1rem", display: "flex", gap: "0.5rem" }}>
+                    <button
+                      type="button"
+                      className="primary-btn btn-sm"
+                      onClick={() => handleEnrichIoc(selectedIoc)}
+                      disabled={enrichingIocId === selectedIoc.id}
+                    >
+                      {enrichingIocId === selectedIoc.id ? "Querying Providers..." : "⚡ Enrich Indicator Now"}
+                    </button>
+                    <button
+                      type="button"
+                      className="secondary-btn btn-sm"
+                      onClick={() => handleToggleFalsePositive(selectedIoc)}
+                    >
+                      {selectedIoc.is_false_positive ? "Unmark False Positive" : "Flag as False Positive"}
+                    </button>
+                  </div>
+                )}
+              </div>
+
+              {/* Multi-provider enrichment cards */}
+              <div style={{ marginTop: "1.5rem" }}>
+                <h3>Threat Intelligence Provider Findings</h3>
+                <div className="enrichment-grid">
+                  {/* VirusTotal Provider */}
+                  <div className="provider-card">
+                    <div className="provider-header">
+                      <span className="provider-name">🔍 VirusTotal v3</span>
+                      <span className="dest-type-tag">Reputation</span>
+                    </div>
+                    {selectedIoc.raw_enrichment?.virustotal ? (
+                      <div>
+                        <div className="provider-stat-row">
+                          <span>Malicious Detections:</span>
+                          <strong style={{ color: "var(--accent-rose)" }}>
+                            {selectedIoc.raw_enrichment.virustotal.malicious || 0}
+                          </strong>
+                        </div>
+                        <div className="provider-stat-row">
+                          <span>Suspicious Detections:</span>
+                          <strong style={{ color: "var(--accent-amber)" }}>
+                            {selectedIoc.raw_enrichment.virustotal.suspicious || 0}
+                          </strong>
+                        </div>
+                        <div className="provider-stat-row">
+                          <span>Harmless / Undetected:</span>
+                          <strong style={{ color: "var(--accent-emerald)" }}>
+                            {selectedIoc.raw_enrichment.virustotal.harmless || 0}
+                          </strong>
+                        </div>
+                      </div>
+                    ) : (
+                      <p style={{ fontSize: "0.8rem", color: "var(--text-muted)" }}>
+                        No VirusTotal intelligence data cached or API key unconfigured.
+                      </p>
+                    )}
+                  </div>
+
+                  {/* AbuseIPDB Provider */}
+                  <div className="provider-card">
+                    <div className="provider-header">
+                      <span className="provider-name">🌐 AbuseIPDB v2</span>
+                      <span className="dest-type-tag">IP Intelligence</span>
+                    </div>
+                    {selectedIoc.raw_enrichment?.abuseipdb ? (
+                      <div>
+                        <div className="provider-stat-row">
+                          <span>Abuse Confidence:</span>
+                          <strong>
+                            {selectedIoc.raw_enrichment.abuseipdb.abuseConfidenceScore || 0}%
+                          </strong>
+                        </div>
+                        <div className="provider-stat-row">
+                          <span>Total Reports:</span>
+                          <strong>
+                            {selectedIoc.raw_enrichment.abuseipdb.totalReports || 0}
+                          </strong>
+                        </div>
+                        <div className="provider-stat-row">
+                          <span>Country Code:</span>
+                          <strong>{selectedIoc.raw_enrichment.abuseipdb.countryCode || "N/A"}</strong>
+                        </div>
+                      </div>
+                    ) : (
+                      <p style={{ fontSize: "0.8rem", color: "var(--text-muted)" }}>
+                        {selectedIoc.type.startsWith("IPV") ? "No AbuseIPDB intelligence data cached." : "AbuseIPDB only supports IP addresses."}
+                      </p>
+                    )}
+                  </div>
+
+                  {/* AlienVault OTX Provider */}
+                  <div className="provider-card">
+                    <div className="provider-header">
+                      <span className="provider-name">👽 AlienVault OTX</span>
+                      <span className="dest-type-tag">Community Pulses</span>
+                    </div>
+                    {selectedIoc.raw_enrichment?.otx ? (
+                      <div>
+                        <div className="provider-stat-row">
+                          <span>Threat Pulses:</span>
+                          <strong>{selectedIoc.raw_enrichment.otx.pulse_count || 0}</strong>
+                        </div>
+                        <div className="provider-stat-row">
+                          <span>Associated Malware:</span>
+                          <strong>{selectedIoc.raw_enrichment.otx.malware_families?.length || 0} families</strong>
+                        </div>
+                      </div>
+                    ) : (
+                      <p style={{ fontSize: "0.8rem", color: "var(--text-muted)" }}>
+                        No AlienVault OTX community pulses recorded for this indicator.
+                      </p>
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              {/* Raw JSON details */}
+              <div style={{ marginTop: "1.5rem" }}>
+                <details className="audit-details-dropdown" style={{ maxWidth: "100%" }}>
+                  <summary style={{ cursor: "pointer", fontSize: "0.85rem", color: "var(--accent-blue)" }}>
+                    Raw Enrichment Response Details
+                  </summary>
+                  <pre className="audit-details-pre" style={{ maxHeight: "250px" }}>
+                    {JSON.stringify(selectedIoc.raw_enrichment || {}, null, 2)}
+                  </pre>
+                </details>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL 5: REGISTER SIEM WEBHOOK DESTINATION */}
+      {showCreateDestModal && (
+        <div className="modal-overlay" onClick={() => setShowCreateDestModal(false)}>
+          <div className="modal-card" onClick={(e) => e.stopPropagation()}>
+            <header className="modal-header">
+              <h2>Register Webhook / SIEM Destination</h2>
+              <button className="close-btn" onClick={() => setShowCreateDestModal(false)}>✕</button>
+            </header>
+
+            {destActionMsg && <div className="alert alert-error">{destActionMsg}</div>}
+
+            <form onSubmit={handleCreateDestinationSubmit} className="form-stack">
+              <div className="form-group">
+                <label>Destination Name *</label>
+                <input
+                  type="text"
+                  required
+                  placeholder="e.g. Corporate Splunk HEC, SOC Slack Alerts"
+                  value={newDestName}
+                  onChange={(e) => setNewDestName(e.target.value)}
+                />
+              </div>
+
+              <div className="form-row">
+                <div className="form-group">
+                  <label>Destination Type *</label>
+                  <select value={newDestType} onChange={(e) => setNewDestType(e.target.value)}>
+                    <option value="SPLUNK_HEC">Splunk HEC (HTTP Event Collector)</option>
+                    <option value="ELASTIC_SIEM">Elastic SIEM / Elasticsearch</option>
+                    <option value="MS_TEAMS">Microsoft Teams Webhook</option>
+                    <option value="SLACK">Slack Incoming Webhook</option>
+                    <option value="CUSTOM_WEBHOOK">Custom Generic Webhook</option>
+                  </select>
+                </div>
+                <div className="form-group">
+                  <label>Auth Secret / Token (Optional)</label>
+                  <input
+                    type="password"
+                    placeholder="••••••••••••"
+                    value={newDestSecret}
+                    onChange={(e) => setNewDestSecret(e.target.value)}
+                  />
+                </div>
+              </div>
+
+              <div className="form-group">
+                <label>Endpoint URL (Public HTTPS) *</label>
+                <input
+                  type="url"
+                  required
+                  placeholder="https://siem.corporate.net:8088/services/collector/event"
+                  value={newDestUrl}
+                  onChange={(e) => setNewDestUrl(e.target.value)}
+                />
+                <p className="field-hint">
+                  SSRF Protection: Requests to private IP spaces (10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16), loopback, or cloud metadata (169.254.169.254) are strictly blocked.
+                </p>
+              </div>
+
+              <div className="form-group">
+                <label>Subscribed Events</label>
+                <div style={{ display: "flex", flexDirection: "column", gap: "0.4rem", marginTop: "0.25rem" }}>
+                  {[
+                    "incident.created.critical",
+                    "incident.status.changed",
+                    "ioc.malicious.detected",
+                    "playbook.execution.completed",
+                  ].map((evt) => (
+                    <label key={evt} style={{ display: "flex", alignItems: "center", gap: "0.5rem", fontSize: "0.8rem", textTransform: "none" }}>
+                      <input
+                        type="checkbox"
+                        checked={newDestEvents.includes(evt)}
+                        onChange={(e) => {
+                          if (e.target.checked) {
+                            setNewDestEvents([...newDestEvents, evt]);
+                          } else {
+                            setNewDestEvents(newDestEvents.filter((item) => item !== evt));
+                          }
+                        }}
+                      />
+                      <code>{evt}</code>
+                    </label>
+                  ))}
+                </div>
+              </div>
+
+              <div className="modal-footer">
+                <button type="button" className="secondary-btn" onClick={() => setShowCreateDestModal(false)}>
+                  Cancel
+                </button>
+                <button type="submit" className="primary-btn">
+                  Register Destination
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL 6: TRIGGER PLAYBOOK EXECUTION */}
+      {selectedPlaybookToTrigger && (
+        <div className="modal-overlay" onClick={() => setSelectedPlaybookToTrigger(null)}>
+          <div className="modal-card" onClick={(e) => e.stopPropagation()}>
+            <header className="modal-header">
+              <div>
+                <h2>Trigger Playbook: {selectedPlaybookToTrigger.name}</h2>
+                <p className="field-hint" style={{ marginTop: "0.25rem" }}>
+                  {selectedPlaybookToTrigger.description}
+                </p>
+              </div>
+              <button className="close-btn" onClick={() => setSelectedPlaybookToTrigger(null)}>✕</button>
+            </header>
+
+            {playbookActionMsg && <div className="alert alert-error">{playbookActionMsg}</div>}
+
+            <form onSubmit={handleTriggerPlaybookSubmit} className="form-stack">
+              <div className="form-group">
+                <label>Target Incident (Optional)</label>
+                <select
+                  value={triggerIncidentId}
+                  onChange={(e) => setTriggerIncidentId(e.target.value)}
+                >
+                  <option value="">No Incident Associated</option>
+                  {incidents.map((inc) => (
+                    <option key={inc.id} value={inc.id}>
+                      [{inc.severity}] {inc.title}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {selectedPlaybookToTrigger.actions.includes("REVOKE_USER_SESSIONS") && (
+                <div className="form-group">
+                  <label>Target User ID for Session Revocation</label>
+                  <select
+                    value={triggerParamUserId}
+                    onChange={(e) => setTriggerParamUserId(e.target.value)}
+                  >
+                    <option value="">Select Target User</option>
+                    {usersList.map((u) => (
+                      <option key={u.id} value={u.id}>
+                        {u.name} ({u.email}) - {u.role}
+                      </option>
+                    ))}
+                  </select>
+                  <p className="field-hint">
+                    Anti-Privilege Escalation: Analysts cannot revoke sessions of Administrators or Super Admins.
+                  </p>
+                </div>
+              )}
+
+              {(selectedPlaybookToTrigger.actions.includes("ISOLATE_ENDPOINT") ||
+                selectedPlaybookToTrigger.actions.includes("BLOCK_IP_FIREWALL")) && (
+                <div className="form-group">
+                  <label>Target Endpoint Hostname or IP Address</label>
+                  <input
+                    type="text"
+                    placeholder="e.g. 198.51.100.25 or work-station-finance-01"
+                    value={triggerParamTarget}
+                    onChange={(e) => setTriggerParamTarget(e.target.value)}
+                  />
+                  <p className="field-hint">
+                    Safety Protection: Loopback (127.0.0.1) and essential infrastructure IP ranges are shielded from isolation.
+                  </p>
+                </div>
+              )}
+
+              <div className="form-group">
+                <label style={{ display: "flex", alignItems: "center", gap: "0.5rem", textTransform: "none", cursor: "pointer" }}>
+                  <input
+                    type="checkbox"
+                    checked={triggerDryRun}
+                    onChange={(e) => setTriggerDryRun(e.target.checked)}
+                  />
+                  <span>
+                    <strong>Simulation Mode (Dry Run)</strong> — simulates actions safely without disrupting production systems.
+                  </span>
+                </label>
+              </div>
+
+              {selectedPlaybookToTrigger.requires_approval && (
+                <div className="alert alert-info">
+                  <strong>Dual Authorization Required:</strong> Because this playbook performs high-risk containment actions, an approval request will be submitted for peer administrator authorization before live execution.
+                </div>
+              )}
+
+              <div className="modal-footer">
+                <button type="button" className="secondary-btn" onClick={() => setSelectedPlaybookToTrigger(null)}>
+                  Cancel
+                </button>
+                <button type="submit" className="primary-btn" disabled={playbookSubmitting}>
+                  {playbookSubmitting ? "Executing..." : "Dispatch Playbook"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL 7: PLAYBOOK EXECUTION LOGS & DETAILS */}
+      {selectedExecutionDetails && (
+        <div className="modal-overlay" onClick={() => setSelectedExecutionDetails(null)}>
+          <div className="modal-card" onClick={(e) => e.stopPropagation()} style={{ maxWidth: "700px" }}>
+            <header className="modal-header">
+              <div>
+                <h2>Playbook Execution Log</h2>
+                <span style={{ fontSize: "0.8rem", color: "var(--text-muted)" }}>
+                  ID: <code>{selectedExecutionDetails.id}</code> | Status: {selectedExecutionDetails.status}
+                </span>
+              </div>
+              <button className="close-btn" onClick={() => setSelectedExecutionDetails(null)}>✕</button>
+            </header>
+
+            <div style={{ marginTop: "1rem" }}>
+              <div className="meta-grid">
+                <div>
+                  <span className="meta-label">Mode</span>
+                  <p><strong>{selectedExecutionDetails.is_dry_run ? "DRY RUN (Simulation)" : "LIVE"}</strong></p>
+                </div>
+                <div>
+                  <span className="meta-label">Status</span>
+                  <p>
+                    <span className={`badge ${selectedExecutionDetails.status === "SUCCESS" ? "badge-success" : selectedExecutionDetails.status === "FAILED" ? "sev-critical" : "badge-inactive"}`}>
+                      {selectedExecutionDetails.status}
+                    </span>
+                  </p>
+                </div>
+                <div>
+                  <span className="meta-label">Started At</span>
+                  <p>{selectedExecutionDetails.started_at ? new Date(selectedExecutionDetails.started_at).toLocaleString() : "—"}</p>
+                </div>
+                <div>
+                  <span className="meta-label">Completed At</span>
+                  <p>{selectedExecutionDetails.completed_at ? new Date(selectedExecutionDetails.completed_at).toLocaleString() : "—"}</p>
+                </div>
+              </div>
+
+              <h4 style={{ marginTop: "1.25rem" }}>Step-by-Step Execution Trail</h4>
+              <div className="execution-timeline">
+                {(!selectedExecutionDetails.execution_log || selectedExecutionDetails.execution_log.length === 0) ? (
+                  <p className="empty-message">No step logs recorded for this execution.</p>
+                ) : (
+                  selectedExecutionDetails.execution_log.map((step: any, idx: number) => (
+                    <div key={idx} className="execution-step-row">
+                      <span className="step-icon-status">
+                        {step.status === "SUCCESS" ? "✅" : step.status === "SIMULATED" ? "🧪" : "❌"}
+                      </span>
+                      <div className="step-content">
+                        <div className="step-title">
+                          Action: <code>{step.action}</code> — {step.status}
+                        </div>
+                        <div className="step-meta">
+                          {step.message || JSON.stringify(step.result || step.details || {})}
+                        </div>
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+
+            <div className="modal-footer" style={{ marginTop: "1.5rem" }}>
+              <button type="button" className="secondary-btn" onClick={() => setSelectedExecutionDetails(null)}>
+                Close
+              </button>
             </div>
           </div>
         </div>

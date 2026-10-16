@@ -48,8 +48,25 @@ SentinelOps enforces strict server-side Role-Based Access Control (RBAC) and mul
 | `/api/v1/audit-events/verify-chain` | GET | Allowed | Allowed (Own Org) | **Forbidden (403)** | **Forbidden (403)** |
 | `/api/v1/audit-events/{id}` (Detail) | GET | Allowed | Allowed (Own Org) | Allowed (Own Org) | Allowed (Own Org) |
 | Audit Update / Delete (`PUT/PATCH/DELETE`) | ANY | **Not Found (405/404)** | **Not Found (405/404)** | **Not Found (405/404)** | **Not Found (405/404)** |
+| `/api/v1/iocs` (List/Search) | GET | Allowed (All/Filtered) | Allowed (Own Org) | Allowed (Own Org) | Allowed (Own Org) |
+| `/api/v1/iocs` (Create/Enrich) | POST | Allowed | Allowed (Own Org) | Allowed (Own Org) | **Forbidden (403)** |
+| `/api/v1/iocs/{id}` (Update) | PATCH | Allowed | Allowed (Own Org) | Allowed (Own Org) | **Forbidden (403)** |
+| `/api/v1/iocs/{id}` (Delete) | DELETE | Allowed | Allowed (Own Org) | **Forbidden (403)** | **Forbidden (403)** |
+| `/api/v1/destinations` (List) | GET | Allowed (All/Filtered) | Allowed (Own Org) | Allowed (Own Org) | Allowed (Own Org) |
+| `/api/v1/destinations` (Create/Delete) | POST/DELETE | Allowed | Allowed (Own Org) | **Forbidden (403)** | **Forbidden (403)** |
+| `/api/v1/destinations/{id}/test` | POST | Allowed | Allowed (Own Org) | Allowed (Own Org) | **Forbidden (403)** |
+| `/api/v1/playbooks` (List) | GET | Allowed (All/Filtered) | Allowed (Own Org) | Allowed (Own Org) | Allowed (Own Org) |
+| `/api/v1/playbooks` (Create/Update) | POST/PATCH | Allowed | Allowed (Own Org) | **Forbidden (403)** | **Forbidden (403)** |
+| `/api/v1/playbooks/{id}/execute` | POST | Allowed | Allowed (Own Org) | Allowed (Own Org)* | **Forbidden (403)** |
+| `/api/v1/playbooks/executions/{id}/approve` | POST | Allowed | Allowed (Own Org)** | **Forbidden (403)** | **Forbidden (403)** |
 | Cross-tenant `/audit-events/{id}` | GET | Allowed | **Not Found (404)** | **Not Found (404)** | **Not Found (404)** |
+| Cross-tenant `/iocs/{id}` | GET/PATCH/DELETE | Allowed | **Not Found (404)** | **Not Found (404)** | **Not Found (404)** |
+| Cross-tenant `/destinations/{id}` | GET/DELETE/TEST | Allowed | **Not Found (404)** | **Not Found (404)** | **Not Found (404)** |
+| Cross-tenant `/playbooks/{id}` | GET/PATCH/EXECUTE | Allowed | **Not Found (404)** | **Not Found (404)** | **Not Found (404)** |
 | Cross-tenant `/incidents/{id}` | GET/PATCH/NOTES/EVIDENCE | Allowed | **Not Found (404)** | **Not Found (404)** | **Not Found (404)** |
+
+*\* Analysts are restricted to Dry Run executions unless approved by an administrator. Also protected by anti-privilege escalation (cannot revoke admin credentials).*
+*\*\* Enforces strict anti-self-approval: Requester cannot approve their own playbook execution request.*
 
 ---
 

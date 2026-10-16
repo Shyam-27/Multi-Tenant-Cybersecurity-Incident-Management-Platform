@@ -30,6 +30,7 @@ from app.schemas.incident import (
 )
 from app.services.audit_service import record_audit_event
 from app.services.incident_service import compute_resolved_at, validate_status_transition
+from app.services.webhook_service import dispatch_event_to_destinations
 from fastapi import Request
 
 router = APIRouter(prefix="/incidents", tags=["incidents"])
@@ -206,6 +207,25 @@ def create_incident(
     )
 
     db.commit()
+
+    # Phase 6: Dispatch webhook if critical incident created
+    if incident.severity == IncidentSeverity.CRITICAL.value:
+        try:
+            dispatch_event_to_destinations(
+                db=db,
+                tenant_id=incident.tenant_id,
+                event_type="incident.created.critical",
+                payload={
+                    "id": str(incident.id),
+                    "title": incident.title,
+                    "category": incident.category,
+                    "severity": incident.severity,
+                    "created_by": current_user.email,
+                },
+                actor_user=current_user,
+            )
+        except Exception:
+            pass
 
     # Re-fetch with loaded relations
     loaded_incident = db.scalar(
@@ -407,6 +427,25 @@ def update_incident(
         )
 
     db.commit()
+
+    # Phase 6: Dispatch webhook if status changed
+    if "status" in changes:
+        try:
+            dispatch_event_to_destinations(
+                db=db,
+                tenant_id=incident.tenant_id,
+                event_type="incident.status.changed",
+                payload={
+                    "id": str(incident.id),
+                    "title": incident.title,
+                    "old_status": changes["status"]["old"],
+                    "new_status": changes["status"]["new"],
+                    "updated_by": current_user.email,
+                },
+                actor_user=current_user,
+            )
+        except Exception:
+            pass
 
     loaded_incident = db.scalar(
         select(Incident)

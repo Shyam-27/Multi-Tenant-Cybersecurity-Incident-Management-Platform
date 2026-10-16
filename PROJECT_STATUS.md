@@ -2,9 +2,9 @@
 
 ## 1. Project Overview
 
-The **Multi-Tenant Cybersecurity Incident Management Platform** (SentinelOps) is designed as a secure SaaS application for tracking, analyzing, and resolving cybersecurity incidents across isolated customer organizations.
+The **Multi-Tenant Cybersecurity Incident Management Platform** (SentinelOps) is designed as an enterprise-grade SaaS application for tracking, analyzing, enriching, and resolving cybersecurity incidents across isolated customer organizations.
 
-This status document reflects the completion of **Phase 5: Immutable Audit Trail & Security Event Monitoring**.
+This status document reflects the completion of **Phase 6: Threat Intelligence Feeds, SIEM Alerting & Incident Response Playbooks**.
 
 ---
 
@@ -18,6 +18,7 @@ This status document reflects the completion of **Phase 5: Immutable Audit Trail
 - **Migrations**: Alembic `1.16.5`
 - **Data Validation & Settings**: Pydantic `2.14.1`, Pydantic Settings `2.10.1`, Email Validator `2.2.0`
 - **Security & Cryptography**: Argon2-cffi `25.1.0` (Argon2id password hashing), PyJWT `2.10.1` (HS256 tokens), Python `hashlib` (SHA-256 cryptographic hashing & hash chaining)
+- **HTTP Client**: HTTPX `0.28.1` (for external threat intel API adapters and SIEM webhook dispatches)
 - **Testing**: Pytest `8.4.1`, HTTPX `0.28.1`
 
 ### Frontend
@@ -45,7 +46,8 @@ D:\CyberSecurity_Incident_Managment_Platform
 ├── README.md
 ├── docs/
 │   ├── audit_architecture.md
-│   └── authorization.md
+│   ├── authorization.md
+│   └── phase6_architecture.md
 ├── backend/
 │   ├── .dockerignore
 │   ├── Dockerfile
@@ -61,7 +63,8 @@ D:\CyberSecurity_Incident_Managment_Platform
 │   │       ├── 20261013_0003_add_roles_and_tenant_is_active.py
 │   │       ├── 20261013_0004_create_incidents_and_notes.py
 │   │       ├── 20261013_0005_create_evidence.py
-│   │       └── 20261013_0006_create_audit_events.py
+│   │       ├── 20261013_0006_create_audit_events.py
+│   │       └── 20261016_0007_phase6_threat_intel_siem_playbooks.py
 │   ├── app/
 │   │   ├── __init__.py
 │   │   ├── main.py
@@ -69,9 +72,12 @@ D:\CyberSecurity_Incident_Managment_Platform
 │   │   │   ├── __init__.py
 │   │   │   ├── audit.py
 │   │   │   ├── auth.py
+│   │   │   ├── destinations.py
 │   │   │   ├── evidence.py
 │   │   │   ├── health.py
 │   │   │   ├── incidents.py
+│   │   │   ├── iocs.py
+│   │   │   ├── playbooks.py
 │   │   │   ├── tenants.py
 │   │   │   └── users.py
 │   │   ├── core/
@@ -87,21 +93,37 @@ D:\CyberSecurity_Incident_Managment_Platform
 │   │   │   ├── audit.py
 │   │   │   ├── evidence.py
 │   │   │   ├── incident.py
+│   │   │   ├── ioc.py
+│   │   │   ├── playbook.py
 │   │   │   ├── tenant.py
-│   │   │   └── user.py
+│   │   │   ├── user.py
+│   │   │   └── webhook.py
 │   │   ├── schemas/
 │   │   │   ├── __init__.py
 │   │   │   ├── audit.py
 │   │   │   ├── auth.py
 │   │   │   ├── evidence.py
 │   │   │   ├── incident.py
+│   │   │   ├── ioc.py
+│   │   │   ├── playbook.py
 │   │   │   ├── tenant.py
-│   │   │   └── user.py
+│   │   │   ├── user.py
+│   │   │   └── webhook.py
 │   │   └── services/
 │   │       ├── __init__.py
 │   │       ├── audit_service.py
 │   │       ├── evidence_service.py
-│   │       └── incident_service.py
+│   │       ├── incident_service.py
+│   │       ├── playbook_service.py
+│   │       ├── threat_intel/
+│   │       │   ├── __init__.py
+│   │       │   ├── abuseipdb.py
+│   │       │   ├── base.py
+│   │       │   ├── normalizer.py
+│   │       │   ├── otx.py
+│   │       │   ├── service.py
+│   │       │   └── virustotal.py
+│   │       └── webhook_service.py
 │   └── tests/
 │       ├── conftest.py
 │       ├── test_audit.py
@@ -109,7 +131,10 @@ D:\CyberSecurity_Incident_Managment_Platform
 │       ├── test_evidence.py
 │       ├── test_health.py
 │       ├── test_incidents.py
-│       └── test_security_and_tenancy.py
+│       ├── test_playbooks.py
+│       ├── test_security_and_tenancy.py
+│       ├── test_threat_intel.py
+│       └── test_webhooks.py
 └── frontend/
     ├── .dockerignore
     ├── Dockerfile
@@ -134,17 +159,15 @@ D:\CyberSecurity_Incident_Managment_Platform
 | **User Login & Session Tokens** (`POST /api/v1/auth/login`) | **VERIFIED** | Timing-safe Argon2 verification, active check, issues HS256 JWT tokens. Records `login_success` and `login_failure` audit events. |
 | **User Logout & Revocation** (`POST /api/v1/auth/logout`) | **VERIFIED** | JWT token `jti` revocation list invalidates logged-out tokens. Records `logout` audit event. |
 | **Role-Based Access Control (RBAC)** | **VERIFIED** | `SUPER_ADMIN`, `TENANT_ADMIN`, `SECURITY_ANALYST`, `SECURITY_VIEWER` enforced on all protected endpoints. |
-| **Tenant User Directory** (`/api/v1/users`) | **VERIFIED** | CRUD operations scoped strictly to the caller's tenant with anti-privilege escalation. Records `user_created`, `user_role_changed`, `user_status_changed`, and `privilege_escalation_denied` audit events. |
-| **Incident Publishing** (`POST /api/v1/incidents`) | **VERIFIED** | Authorized creation (`TENANT_ADMIN`, `SECURITY_ANALYST`). Server sets `tenant_id` and `created_by_id`. Assigned analyst verified against caller's tenant. Records `incident_created`. |
-| **Incident Listing & Filtering** (`GET /api/v1/incidents`) | **VERIFIED** | Tenant-scoped querying with search, status, severity, category, assignee filters, sorting, and pagination metadata. |
-| **Incident Detail View & Anti-IDOR** (`GET /api/v1/incidents/{id}`) | **VERIFIED** | Returns incident and investigation notes. Returns `404 Not Found` for cross-tenant IDs. |
-| **Incident Updates & Status Workflow** (`PATCH /api/v1/incidents/{id}`) | **VERIFIED** | Enforces state transitions (`OPEN` → `INVESTIGATING` → `CONTAINED` → `RESOLVED` → `CLOSED`), sets/clears `resolved_at`, and prevents immutable field modification. Records `incident_status_changed`, `incident_severity_changed`, and `incident_assigned`. |
-| **Investigation Notes** (`POST /api/v1/incidents/{id}/notes`) | **VERIFIED** | Append-only notes associated with author and verified incident. Blocked for `SECURITY_VIEWER` (403). Cross-tenant attempts return 404. Records `incident_note_added`. |
-| **Incident Metrics** (`GET /api/v1/incidents/metrics`) | **VERIFIED** | Real-time aggregate counts for open, investigating, contained, resolved, closed, and critical/high incidents. |
-| **Evidence Management & Secure Storage** (`/api/v1/incidents/{id}/evidence`) | **VERIFIED** | Multipart uploads with SHA-256 integrity digest, magic-byte validation, disk quota limits (500MB), filename sanitization, protected streaming downloads, and tenant-isolated storage directories. Records `evidence_uploaded`, `evidence_downloaded`, and `evidence_validation_failed`. |
-| **Immutable Audit Trail & Cryptographic Chaining** (`/api/v1/audit-events`) | **VERIFIED** | Append-only audit records, sequential tenant-scoped SHA-256 hash chaining, sensitive secret redaction (`sanitize_audit_details`), actor identification (analyst, system, automated), and cryptographic integrity verification (`/verify-chain`). |
-| **Frontend SOC Operations & Audit Dashboard** | **VERIFIED** | Dark cybersecurity theme with active metric cards, incident list/filter/details, evidence uploads & integrity downloads, user directory, and full-featured Audit Trail viewer with live chain verification. |
-| **Automated Test Suite** | **VERIFIED** | 72 pytest test cases covering health, authentication, RBAC, tenant isolation, incident CRUD, notes, workflows, evidence uploads/validation, and audit trail hash chaining. |
+| **Tenant User Directory** (`/api/v1/users`) | **VERIFIED** | CRUD operations scoped strictly to the caller's tenant with anti-privilege escalation. |
+| **Incident Publishing & Lifecycle** (`/api/v1/incidents`) | **VERIFIED** | Creation, search, multi-field filtering, pagination, assignments, state transitions (`OPEN` → `INVESTIGATING` → `CONTAINED` → `RESOLVED` → `CLOSED`), and investigation notes. Automatically dispatches SIEM webhooks on critical severity or status change events. |
+| **Evidence Management & Forensic Artifacts** (`/api/v1/incidents/{id}/evidence`) | **VERIFIED** | Multipart uploads with SHA-256 integrity digest, magic-byte validation, disk quota limits, streaming downloads with anti-MIME-sniffing headers, and tenant-isolated storage directories. |
+| **Immutable Audit Trail & Cryptographic Chaining** (`/api/v1/audit-events`) | **VERIFIED** | Append-only audit records, sequential tenant-scoped SHA-256 hash chaining, sensitive secret redaction, and cryptographic integrity verification (`/verify-chain`). |
+| **Threat Intelligence & IOC Management** (`/api/v1/iocs`) | **VERIFIED** | Tenant-isolated indicators (IPv4, IPv6, Domain, URL, SHA256, MD5), canonical normalization, multi-provider enrichment adapters (VirusTotal v3, AbuseIPDB v2, AlienVault OTX), configurable 24h cache TTL, confidence score weighting, false positive flagging, and background enrichment audits. |
+| **SIEM & Webhook Dispatcher** (`/api/v1/destinations`) | **VERIFIED** | Custom formatters for Splunk HEC, Elastic SIEM, Microsoft Teams, Slack, and generic webhooks. Strict SSRF validation (blocking loopback, private RFC1918/RFC4193 subnets, and cloud metadata `169.254.169.254`), exponential backoff retries, synthetic test ping endpoint, and delivery audit history. |
+| **Automated Response Playbooks** (`/api/v1/playbooks`) | **VERIFIED** | Configurable response playbooks with safe simulation mode (Dry Run), credential session revocation with anti-privilege escalation (analysts cannot revoke admins), simulated EDR endpoint isolation with loopback protection, simulated firewall IP blocks, and dual-authorization workflow with anti-self-approval enforcement. |
+| **Frontend SOC Operations Dashboard** | **VERIFIED** | Integrated navigation tabs for Incidents, Threat Intel, SIEM & Webhooks, Response Playbooks, Team Directory, Audit Trail, and Account Security. Modal drawers for multi-provider IOC intelligence, live test pings, and playbook execution step traces. |
+| **Automated Test Suite** | **VERIFIED** | 98 pytest test cases covering all 6 platform phases with 100% pass rate. |
 
 ---
 
@@ -152,7 +175,7 @@ D:\CyberSecurity_Incident_Managment_Platform
 
 - **Database Engine**: PostgreSQL 16 Alpine running on port `5432` with volume `postgres_data`.
 - **Health**: Healthy.
-- **Alembic Status**: Current head revision is `20261013_0006`.
+- **Alembic Status**: Current head revision is `20261016_0007`.
 - **Applied Migrations**:
   1. `20260823_0001_create_users`: Users table.
   2. `20260823_0002_add_tenants`: Tenants table and `users.tenant_id` foreign key.
@@ -160,34 +183,40 @@ D:\CyberSecurity_Incident_Managment_Platform
   4. `20261013_0004_create_incidents_and_notes`: Incidents and incident notes tables with indexes.
   5. `20261013_0005_create_evidence`: Evidence table with composite index and metadata.
   6. `20261013_0006_create_audit_events`: Audit events table with tenant hash chaining and indexing.
+  7. `20261016_0007_phase6_threat_intel_siem_playbooks`: Indicators of compromise, notification destinations, webhook deliveries, response playbooks, playbook executions, and playbook approvals tables with composite tenant indexes.
 - **Current Tables in Database**:
-  - `alembic_version` (revision: `20261013_0006`)
+  - `alembic_version` (revision: `20261016_0007`)
   - `tenants`
   - `users`
   - `incidents`
   - `incident_notes`
   - `evidence`
   - `audit_events`
+  - `indicators_of_compromise`
+  - `notification_destinations`
+  - `webhook_deliveries`
+  - `response_playbooks`
+  - `playbook_executions`
+  - `playbook_approvals`
 
 ---
 
 ## 6. Test Results Summary
 
 Executed inside the running backend container (`docker compose exec backend pytest -v`):
-- **Total Test Cases**: 72
-- **Passing**: 72 (100%)
+- **Total Test Cases**: 98
+- **Passing**: 98 (100%)
 - **Failing**: 0
-- **Warnings**: 1 (Pydantic datetime serialization warning in test client)
-- **Duration**: ~47s
+- **Warnings**: 1 (Deprecated AnyIO import warning in Starlette test client)
+- **Duration**: ~64s
 
 Frontend compilation test:
-- `docker compose exec frontend npm run build`: Built production bundle cleanly in 1.15s with zero errors.
+- `docker compose exec frontend npm run build`: Built production bundle cleanly in 2.31s with zero errors.
 
 ---
 
-## 7. Recommended Next Implementation Phase
+## 7. Next Implementation Milestones
 
-**Phase 6: Threat Intelligence & Automated SIEM Alerting**
-1. **Threat Intelligence Feeds**: IOC (Indicator of Compromise) enrichment for IP addresses, domain names, and file hashes via external threat feeds.
-2. **Real-time Webhook & SIEM Dispatch**: Configurable notification hooks (Slack, Microsoft Teams, Splunk HEC, Elastic SIEM) triggered on critical incidents or security audit alerts.
-3. **Automated Incident Response Playbooks**: Workflow execution engine for automated containment actions (IP blocklists, user credential revocation).
+1. **Scheduled Threat Feed Sync**: Periodic polling worker for threat feed updates and expired cache eviction.
+2. **Advanced Playbook Triggers**: Condition-based automatic trigger evaluation on ingested evidence or real-time security events.
+3. **Multi-Factor Authentication (MFA/TOTP)**: Hardware token and authenticator app enforcement for administrative and privileged containment actions.
