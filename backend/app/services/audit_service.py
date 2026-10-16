@@ -28,6 +28,9 @@ SENSITIVE_KEYS = {
     "raw_body",
 }
 
+# 64-character SHA-256 genesis anchor hash
+GENESIS_HASH = "0" * 64
+
 
 def sanitize_audit_details(data: dict[str, Any] | None) -> dict[str, Any]:
     """
@@ -182,7 +185,7 @@ def record_audit_event(
         .limit(1)
     )
     last_hash = db.scalar(query)
-    prev_hash_str = last_hash or "GENESIS_BLOCK_0000000000000000000000000000000000000000000000000000"
+    prev_hash_str = last_hash or GENESIS_HASH
 
     # 2. Compute canonical event hash
     computed_hash = compute_event_hash(
@@ -238,7 +241,7 @@ def verify_tenant_audit_chain(db: Session, tenant_id: UUID | None) -> tuple[bool
     if not events:
         return True, 0, None, "No audit events found for verification"
 
-    expected_prev = "GENESIS_BLOCK_0000000000000000000000000000000000000000000000000000"
+    expected_prev = GENESIS_HASH
     for idx, ev in enumerate(events):
         # 1. Check previous_hash link
         if ev.previous_hash != expected_prev:
