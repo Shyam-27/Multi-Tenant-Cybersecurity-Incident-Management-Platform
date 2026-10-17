@@ -57,11 +57,18 @@ def normalize_indicator(indicator_type: str, raw_value: str) -> tuple[str, str]:
                 raise ValueError("URL must have a valid hostname/netloc")
             # SSRF safe normalization: remove user credentials from URL
             hostname = parsed.hostname.lower() if parsed.hostname else ""
+            if not hostname:
+                raise ValueError("URL must have a valid hostname")
             port_part = f":{parsed.port}" if parsed.port and parsed.port not in (80, 443) else ""
-            normalized = f"{parsed.scheme.lower()}://{hostname}{port_part}{parsed.path or '/'}"
+            path = parsed.path or "/"
+            if not path.startswith("/"):
+                path = "/" + path
+            normalized = f"{parsed.scheme.lower()}://{hostname}{port_part}{path}"
             if parsed.query:
                 normalized += f"?{parsed.query}"
             return IndicatorType.URL.value, normalized
+        except ValueError:
+            raise
         except Exception as exc:
             raise ValueError(f"Invalid URL format: {exc}") from exc
 

@@ -44,10 +44,36 @@ BLOCKED_NETWORKS = [
 ]
 
 
+def is_prohibited_ip(ip_obj: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
+    """
+    Checks if an IP address is internal, loopback, link-local, reserved,
+    or IPv4-mapped IPv6 pointing to a prohibited address.
+    """
+    check_ips = [ip_obj]
+    if isinstance(ip_obj, ipaddress.IPv6Address) and ip_obj.ipv4_mapped:
+        check_ips.append(ip_obj.ipv4_mapped)
+
+    for ip in check_ips:
+        if (
+            ip.is_private
+            or ip.is_loopback
+            or ip.is_link_local
+            or ip.is_reserved
+            or ip.is_multicast
+            or ip.is_unspecified
+        ):
+            return True
+        for blocked_net in BLOCKED_NETWORKS:
+            if ip.version == blocked_net.version and ip in blocked_net:
+                return True
+    return False
+
+
 def validate_destination_url(url: str, allow_local: bool = False) -> str:
     """
     Validates webhook URL and blocks SSRF attacks against internal network,
-    loopback addresses, link-local metadata endpoints, and non-HTTP schemes.
+    loopback addresses, link-local metadata endpoints, IPv4-mapped IPv6,
+    and non-HTTP schemes.
     """
     if not url or not url.strip():
         raise ValueError("Endpoint URL cannot be empty")
@@ -55,6 +81,10 @@ def validate_destination_url(url: str, allow_local: bool = False) -> str:
     parsed = urlparse(url.strip())
     if parsed.scheme.lower() not in ("http", "https"):
         raise ValueError("Webhook URL scheme must be http or https")
+
+    # Reject embedded userinfo (credentials in URL)
+    if parsed.username or parsed.password:
+        raise ValueError("Webhook URL must not contain embedded user credentials")
 
     hostname = parsed.hostname
     if not hostname:
@@ -64,9 +94,24 @@ def validate_destination_url(url: str, allow_local: bool = False) -> str:
     if allow_local:
         return url.strip()
 
-    # Block well-known cloud metadata hostnames
-    if hostname.lower() in ("metadata.google.internal", "instance-data", "localhost"):
+    # Block well-known cloud metadata and internal hostnames
+    if hostname.lower() in (
+        "metadata.google.internal",
+        "instance-data",
+        "localhost",
+        "169.254.169.254",
+    ):
         raise ValueError(f"Prohibited internal target hostname: '{hostname}'")
+
+    # Test if hostname itself is an IP literal
+    try:
+        direct_ip = ipaddress.ip_address(hostname)
+        if is_prohibited_ip(direct_ip):
+            raise ValueError(f"Webhook destination resolves to prohibited IP address '{hostname}'")
+    except ValueError as val_err:
+        if "prohibited IP" in str(val_err):
+            raise
+        # Not an IP literal, proceed to DNS resolution
 
     # Resolve hostname to IP to prevent DNS-rebinding and private subnet reachability
     try:
@@ -74,9 +119,8 @@ def validate_destination_url(url: str, allow_local: bool = False) -> str:
         for item in addr_info:
             ip_str = item[4][0]
             ip_obj = ipaddress.ip_address(ip_str)
-            for blocked_net in BLOCKED_NETWORKS:
-                if ip_obj in blocked_net:
-                    raise ValueError(f"Webhook destination resolves to prohibited IP address '{ip_str}'")
+            if is_prohibited_ip(ip_obj):
+                raise ValueError(f"Webhook destination resolves to prohibited IP address '{ip_str}'")
     except socket.gaierror as exc:
         raise ValueError(f"Failed to resolve hostname '{hostname}': {exc}") from exc
 
@@ -95,6 +139,8 @@ def format_webhook_payload(
     """
     sanitized = sanitize_audit_details(raw_payload)
     headers = {"Content-Type": "application/json"}
+    if sanitized.get("is_synthetic"):
+        headers["X-SentinelOps-Synthetic"] = "true"
     now_iso = datetime.now(timezone.utc).isoformat()
 
     dtype = destination_type.upper()
@@ -192,6 +238,12 @@ def deliver_webhook_now(
     settings = get_settings()
     timeout = float(settings.webhook_timeout_seconds)
 
+    # Re-validate destination URL at dispatch time to protect against DNS rebinding
+    try:
+        validate_destination_url(destination.endpoint_url, allow_local=settings.allow_local_webhooks)
+    except ValueError as val_err:
+        return False, None, f"Destination URL failed dispatch-time security check: {val_err}"
+
     headers, body = format_webhook_payload(
         destination_type=destination.destination_type,
         event_type=event_type,
@@ -201,13 +253,15 @@ def deliver_webhook_now(
 
     should_close_client = False
     if client is None:
-        client = httpx.Client(timeout=timeout)
+        client = httpx.Client(timeout=timeout, follow_redirects=False)
         should_close_client = True
 
     try:
-        resp = client.post(destination.endpoint_url, headers=headers, json=body)
+        resp = client.post(destination.endpoint_url, headers=headers, json=body, follow_redirects=False)
         if 200 <= resp.status_code < 300:
             return True, resp.status_code, None
+        elif 300 <= resp.status_code < 400:
+            return False, resp.status_code, f"Redirects are prohibited for security (HTTP {resp.status_code})"
         else:
             return False, resp.status_code, f"HTTP status {resp.status_code}: {resp.text[:200]}"
     except httpx.TimeoutException:
@@ -231,6 +285,12 @@ def dispatch_event_to_destinations(
     Asynchronously or synchronously dispatches events to all active subscribed destinations.
     Enforces deduplication / idempotency and records outcomes.
     """
+    # Infinite webhook recursion guard: do not dispatch webhook/audit internal events
+    RECURSION_PROHIBITED_PREFIXES = ("audit.", "webhook.", "test.", "delivery.")
+    if any(event_type.startswith(prefix) for prefix in RECURSION_PROHIBITED_PREFIXES):
+        logger.debug("Ignoring event '%s' to prevent recursive webhook triggering", event_type)
+        return []
+
     settings = get_settings()
 
     # Find matching active destinations for this tenant
@@ -307,7 +367,8 @@ def send_test_webhook(
     """Sends an explicit synthetic test event to a destination."""
     test_event_type = "test.ping"
     test_payload = {
-        "message": "SentinelOps SIEM/Webhook test ping",
+        "message": "[SYNTHETIC TEST] SentinelOps SIEM/Webhook test ping",
+        "is_synthetic": True,
         "destination_name": destination.name,
         "destination_type": destination.destination_type,
         "tenant_id": str(destination.tenant_id),
@@ -347,8 +408,76 @@ def send_test_webhook(
             "status_code": code,
             "success": success,
             "error": err,
+            "is_synthetic": True,
         },
     )
     db.commit()
 
     return success, code, err
+
+
+def retry_pending_webhook_deliveries(
+    db: Session,
+    max_batch: int = 50,
+    client: httpx.Client | None = None,
+) -> int:
+    """
+    Scans for deliveries in RETRYING state where next_retry_at is in the past,
+    and re-attempts delivery with exponential backoff up to max_attempts.
+    Returns count of processed retries.
+    """
+    now = datetime.now(timezone.utc)
+    deliveries = db.scalars(
+        select(WebhookDelivery)
+        .where(
+            WebhookDelivery.status == DeliveryStatus.RETRYING.value,
+            WebhookDelivery.next_retry_at <= now,
+        )
+        .limit(max_batch)
+    ).all()
+
+    processed_count = 0
+    for delivery in deliveries:
+        dest = db.scalar(
+            select(NotificationDestination).where(
+                NotificationDestination.id == delivery.destination_id,
+                NotificationDestination.is_enabled == True,
+            )
+        )
+        if not dest:
+            delivery.status = DeliveryStatus.FAILED.value
+            delivery.error_summary = "Destination deleted or disabled"
+            continue
+
+        delivery.attempt_count += 1
+        delivery.last_attempt_at = now
+        success, code, err = deliver_webhook_now(
+            destination=dest,
+            event_type=delivery.event_type,
+            payload=delivery.payload,
+            delivery_id=delivery.id,
+            client=client,
+        )
+        delivery.response_status_code = code
+
+        if success:
+            delivery.status = DeliveryStatus.SUCCESS.value
+            delivery.error_summary = None
+        else:
+            delivery.error_summary = err
+            if delivery.attempt_count < delivery.max_attempts:
+                delivery.status = DeliveryStatus.RETRYING.value
+                delivery.next_retry_at = now + timedelta(seconds=15 * delivery.attempt_count)
+            else:
+                delivery.status = DeliveryStatus.FAILED.value
+
+        processed_count += 1
+
+    if processed_count > 0:
+        try:
+            db.commit()
+        except Exception as exc:
+            db.rollback()
+            logger.error("Failed to commit retried webhook deliveries: %s", exc)
+
+    return processed_count

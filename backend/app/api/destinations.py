@@ -104,6 +104,34 @@ def list_destinations(
     return [_to_destination_response(d) for d in items]
 
 
+@router.get("/deliveries/list", response_model=DeliveryListResponse)
+def list_all_deliveries(
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=20, ge=1, le=100),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> DeliveryListResponse:
+    query = select(WebhookDelivery)
+    if current_user.role != UserRole.SUPER_ADMIN.value:
+        query = query.where(WebhookDelivery.tenant_id == current_user.tenant_id)
+
+    total = db.scalar(select(func.count()).select_from(query.subquery())) or 0
+    pages = max(1, ceil(total / page_size))
+    offset = (page - 1) * page_size
+
+    items = db.scalars(
+        query.order_by(WebhookDelivery.created_at.desc()).offset(offset).limit(page_size)
+    ).all()
+
+    return DeliveryListResponse(
+        items=items,
+        total=total,
+        page=page,
+        page_size=page_size,
+        pages=pages,
+    )
+
+
 @router.get("/{id}", response_model=DestinationResponse)
 def get_destination(
     id: UUID,

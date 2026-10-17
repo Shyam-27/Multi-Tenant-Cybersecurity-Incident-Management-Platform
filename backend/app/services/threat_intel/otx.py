@@ -34,6 +34,7 @@ class AlienVaultOTXProvider(ThreatIntelProvider):
             IndicatorType.DOMAIN.value,
             IndicatorType.URL.value,
             IndicatorType.SHA256.value,
+            IndicatorType.SHA1.value,
             IndicatorType.MD5.value,
         )
 
@@ -70,7 +71,7 @@ class AlienVaultOTXProvider(ThreatIntelProvider):
             section = "domain"
         elif t == IndicatorType.URL.value:
             section = "url"
-        elif t in (IndicatorType.SHA256.value, IndicatorType.MD5.value):
+        elif t in (IndicatorType.SHA256.value, IndicatorType.SHA1.value, IndicatorType.MD5.value):
             section = "file"
         else:
             return {
@@ -95,11 +96,11 @@ class AlienVaultOTXProvider(ThreatIntelProvider):
                 return {
                     "provider": self.name,
                     "lookup_at": now_iso,
-                    "verdict": ThreatVerdict.BENIGN.value,
-                    "confidence": 60,
-                    "severity": ThreatSeverity.LOW.value,
-                    "summary": "No threat pulses found in AlienVault OTX.",
-                    "raw": {"pulse_count": 0},
+                    "verdict": ThreatVerdict.UNKNOWN.value,
+                    "confidence": 0,
+                    "severity": ThreatSeverity.UNKNOWN.value,
+                    "summary": "No threat pulses found in AlienVault OTX database.",
+                    "raw": {"pulse_count": 0, "status_code": 404},
                     "error": None,
                     "is_mocked": False,
                 }

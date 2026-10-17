@@ -34,6 +34,7 @@ class VirusTotalProvider(ThreatIntelProvider):
             IndicatorType.SHA1.value,
             IndicatorType.MD5.value,
             IndicatorType.IPV4.value,
+            IndicatorType.IPV6.value,
             IndicatorType.DOMAIN.value,
             IndicatorType.URL.value,
         )
@@ -65,7 +66,7 @@ class VirusTotalProvider(ThreatIntelProvider):
         t = indicator_type.upper()
         if t in (IndicatorType.SHA256.value, IndicatorType.SHA1.value, IndicatorType.MD5.value):
             endpoint = f"{self.BASE_URL}/files/{value}"
-        elif t == IndicatorType.IPV4.value:
+        elif t in (IndicatorType.IPV4.value, IndicatorType.IPV6.value):
             endpoint = f"{self.BASE_URL}/ip_addresses/{value}"
         elif t == IndicatorType.DOMAIN.value:
             endpoint = f"{self.BASE_URL}/domains/{value}"

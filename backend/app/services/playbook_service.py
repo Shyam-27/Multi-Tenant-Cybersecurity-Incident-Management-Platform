@@ -68,7 +68,7 @@ def execute_playbook_action(
                 "is_dry_run": is_dry_run,
             }
 
-        # Anti-privilege escalation: analyst cannot revoke admin
+        # Anti-privilege escalation: analyst cannot revoke admin, tenant admin cannot revoke super admin
         if actor_user.role == UserRole.SECURITY_ANALYST.value and target_user.role in (
             UserRole.TENANT_ADMIN.value,
             UserRole.SUPER_ADMIN.value,
@@ -77,6 +77,13 @@ def execute_playbook_action(
                 "action": act,
                 "status": "FAILED",
                 "details": "Privilege violation: Security Analyst cannot revoke Administrator sessions",
+                "is_dry_run": is_dry_run,
+            }
+        if actor_user.role == UserRole.TENANT_ADMIN.value and target_user.role == UserRole.SUPER_ADMIN.value:
+            return {
+                "action": act,
+                "status": "FAILED",
+                "details": "Privilege violation: Tenant Administrator cannot revoke Super Administrator sessions",
                 "is_dry_run": is_dry_run,
             }
 
@@ -240,15 +247,24 @@ def trigger_playbook_execution(
 
     for act in playbook.actions:
         action_type = act.get("action_type", "")
-        res = execute_playbook_action(
-            db=db,
-            action_type=action_type,
-            action_config=act,
-            parameters=params,
-            tenant_id=playbook.tenant_id,
-            actor_user=actor_user,
-            is_dry_run=is_dry_run,
-        )
+        try:
+            res = execute_playbook_action(
+                db=db,
+                action_type=action_type,
+                action_config=act,
+                parameters=params,
+                tenant_id=playbook.tenant_id,
+                actor_user=actor_user,
+                is_dry_run=is_dry_run,
+            )
+        except Exception as exc:
+            logger.error("Action %s failed unexpectedly: %s", action_type, exc)
+            res = {
+                "action": action_type,
+                "status": "FAILED",
+                "details": f"Internal execution error: {exc}",
+                "is_dry_run": is_dry_run,
+            }
         step_results.append(res)
         if res.get("status") == "FAILED":
             overall_success = False
@@ -289,30 +305,22 @@ def decide_playbook_approval(
 ) -> PlaybookExecution:
     """
     Approve or reject a pending playbook execution.
-    Enforces tenant boundaries and anti-self-approval protection.
+    Enforces tenant boundaries, serializing locks, and anti-self-approval protection.
     """
     execution = db.scalar(
-        select(PlaybookExecution).where(PlaybookExecution.id == execution_id)
+        select(PlaybookExecution)
+        .where(PlaybookExecution.id == execution_id)
+        .with_for_update()
     )
-    if not execution or execution.tenant_id != approver.tenant_id:
+    if not execution or (approver.role != UserRole.SUPER_ADMIN.value and execution.tenant_id != approver.tenant_id):
         raise ValueError("Playbook execution not found")
 
     if execution.status != ExecutionStatus.PENDING_APPROVAL.value:
         raise ValueError(f"Execution is not in PENDING_APPROVAL state (current: {execution.status})")
 
-    # Anti-Self-Approval constraint: prevent single operator from initiating and approving live response
-    # if other tenant admins are available
+    # Anti-Self-Approval constraint: unconditional prevention of self-approval
     if execution.triggered_by_id == approver.id:
-        other_admins_count = db.scalar(
-            select(select(User).where(
-                User.tenant_id == approver.tenant_id,
-                User.role.in_([UserRole.TENANT_ADMIN.value, UserRole.SUPER_ADMIN.value]),
-                User.id != approver.id,
-                User.is_active == True,
-            ).exists())
-        )
-        if other_admins_count:
-            raise ValueError("Anti-self-approval policy violation: Another Tenant Administrator must approve this response action.")
+        raise ValueError("Anti-self-approval policy violation: An operator cannot approve their own playbook execution.")
 
     approval = execution.approval
     if not approval:
@@ -355,15 +363,24 @@ def decide_playbook_approval(
 
     for act in execution.playbook.actions:
         action_type = act.get("action_type", "")
-        res = execute_playbook_action(
-            db=db,
-            action_type=action_type,
-            action_config=act,
-            parameters=execution.parameters,
-            tenant_id=execution.tenant_id,
-            actor_user=approver,
-            is_dry_run=execution.is_dry_run,
-        )
+        try:
+            res = execute_playbook_action(
+                db=db,
+                action_type=action_type,
+                action_config=act,
+                parameters=execution.parameters,
+                tenant_id=execution.tenant_id,
+                actor_user=approver,
+                is_dry_run=execution.is_dry_run,
+            )
+        except Exception as exc:
+            logger.error("Action %s failed unexpectedly during approval: %s", action_type, exc)
+            res = {
+                "action": action_type,
+                "status": "FAILED",
+                "details": f"Internal execution error: {exc}",
+                "is_dry_run": execution.is_dry_run,
+            }
         step_results.append(res)
         if res.get("status") == "FAILED":
             overall_success = False

@@ -89,9 +89,11 @@ class ThreatIntelService:
                 }
 
         # Aggregate Verdict & Confidence
-        verdicts = [res.get("verdict") for res in provider_results.values() if not res.get("error")]
-        confidences = [res.get("confidence", 0) for res in provider_results.values() if not res.get("error")]
-        severities = [res.get("severity") for res in provider_results.values() if not res.get("error")]
+        has_provider_errors = any(bool(res.get("error")) for res in provider_results.values())
+        valid_results = [res for res in provider_results.values() if not res.get("error")]
+        verdicts = [res.get("verdict") for res in valid_results]
+        confidences = [res.get("confidence", 0) for res in valid_results]
+        severities = [res.get("severity") for res in valid_results]
 
         if ThreatVerdict.MALICIOUS.value in verdicts:
             aggregated_verdict = ThreatVerdict.MALICIOUS.value
@@ -104,13 +106,13 @@ class ThreatIntelService:
             aggregated_verdict = ThreatVerdict.SUSPICIOUS.value
             aggregated_confidence = max(confidences) if confidences else 50
             aggregated_severity = ThreatSeverity.MEDIUM.value
-        elif verdicts and all(v == ThreatVerdict.BENIGN.value for v in verdicts):
+        elif verdicts and all(v == ThreatVerdict.BENIGN.value for v in verdicts) and not has_provider_errors:
             aggregated_verdict = ThreatVerdict.BENIGN.value
             aggregated_confidence = max(confidences) if confidences else 70
             aggregated_severity = ThreatSeverity.LOW.value
         else:
             aggregated_verdict = ThreatVerdict.UNKNOWN.value
-            aggregated_confidence = max(confidences) if confidences else 0
+            aggregated_confidence = max(confidences) if (confidences and not has_provider_errors) else 0
             aggregated_severity = ThreatSeverity.UNKNOWN.value
 
         # Update indicator fields
