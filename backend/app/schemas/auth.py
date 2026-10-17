@@ -44,11 +44,15 @@ class UserResponse(BaseModel):
     email: EmailStr
     role: str
     is_active: bool
+    mfa_enabled: bool = False
     last_login_at: datetime | None = None
     created_at: datetime
     full_name: str | None = None
 
 
 class TokenResponse(BaseModel):
-    access_token: str
+    access_token: str | None = None
     token_type: str = "bearer"
+    mfa_required: bool = False
+    mfa_token: str | None = None
+    message: str | None = None

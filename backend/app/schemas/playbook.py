@@ -27,10 +27,14 @@ class TriggerExecutionRequest(BaseModel):
     incident_id: UUID | None = None
     parameters: dict[str, Any] = Field(default_factory=dict)
     override_dry_run: bool | None = None
+    mfa_code: str | None = Field(default=None, description="Fresh TOTP or recovery code for live execution")
+    step_up_token: str | None = Field(default=None, description="Step-up token from /auth/mfa/step-up")
 
 
 class ApprovalDecisionRequest(BaseModel):
     notes: str | None = Field(default=None, max_length=1000)
+    mfa_code: str | None = Field(default=None, description="Fresh TOTP or recovery code for live approval")
+    step_up_token: str | None = Field(default=None, description="Step-up token from /auth/mfa/step-up")
 
 
 class PlaybookResponse(BaseModel):
@@ -56,6 +60,8 @@ class ApprovalResponse(BaseModel):
     decided_by_id: UUID | None
     decision_notes: str | None
     decided_at: datetime | None
+    step_up_verified_at: datetime | None = None
+    step_up_method: str | None = None
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -74,6 +80,8 @@ class ExecutionResponse(BaseModel):
     error_summary: str | None
     created_at: datetime
     completed_at: datetime | None
+    step_up_verified_at: datetime | None = None
+    step_up_method: str | None = None
     approval: ApprovalResponse | None = None
 
     model_config = ConfigDict(from_attributes=True)

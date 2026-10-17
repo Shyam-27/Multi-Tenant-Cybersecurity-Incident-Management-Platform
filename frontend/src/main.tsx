@@ -11,8 +11,23 @@ interface User {
   email: string;
   role: string;
   is_active: boolean;
+  mfa_enabled?: boolean;
   last_login_at: string | null;
   created_at: string;
+}
+
+interface MFAStatus {
+  mfa_enabled: boolean;
+  enrolled_at: string | null;
+  recovery_codes_remaining: number;
+}
+
+interface MFAEnrollData {
+  secret: string;
+  provisioning_uri: string;
+  qr_code: string;
+  qr_code_svg?: string;
+  recovery_codes: string[];
 }
 
 interface Tenant {
@@ -220,6 +235,44 @@ export function App() {
   const [activeSection, setActiveSection] = useState<
     "incidents" | "threat-intel" | "webhooks" | "playbooks" | "users" | "audit" | "settings"
   >("incidents");
+
+  // MFA Authentication & Challenge State
+  const [mfaChallengeToken, setMfaChallengeToken] = useState<string | null>(null);
+  const [mfaInputCode, setMfaInputCode] = useState("");
+  const [mfaUseRecovery, setMfaUseRecovery] = useState(false);
+  const [mfaSubmitting, setMfaSubmitting] = useState(false);
+  const [mfaError, setMfaError] = useState<string | null>(null);
+
+  // MFA Management State (Settings)
+  const [mfaStatus, setMfaStatus] = useState<MFAStatus | null>(null);
+  const [mfaLoading, setMfaLoading] = useState(false);
+  const [mfaActionMsg, setMfaActionMsg] = useState<string | null>(null);
+  const [showEnrollModal, setShowEnrollModal] = useState(false);
+  const [enrollData, setEnrollData] = useState<MFAEnrollData | null>(null);
+  const [confirmTotpCode, setConfirmTotpCode] = useState("");
+  const [enrollError, setEnrollError] = useState<string | null>(null);
+  const [enrollSubmitting, setEnrollSubmitting] = useState(false);
+
+  // Disable MFA & Recovery Codes Regeneration Modal States
+  const [showDisableMfaModal, setShowDisableMfaModal] = useState(false);
+  const [disablePassword, setDisablePassword] = useState("");
+  const [disableTotpCode, setDisableTotpCode] = useState("");
+  const [disableError, setDisableError] = useState<string | null>(null);
+  const [disableSubmitting, setDisableSubmitting] = useState(false);
+
+  const [showRegenModal, setShowRegenModal] = useState(false);
+  const [regenPassword, setRegenPassword] = useState("");
+  const [regenTotpCode, setRegenTotpCode] = useState("");
+  const [regenCodes, setRegenCodes] = useState<string[] | null>(null);
+  const [regenError, setRegenError] = useState<string | null>(null);
+  const [regenSubmitting, setRegenSubmitting] = useState(false);
+
+  // Step-Up Verification Modal State (Live Playbooks)
+  const [showStepUpModal, setShowStepUpModal] = useState(false);
+  const [stepUpCode, setStepUpCode] = useState("");
+  const [stepUpError, setStepUpError] = useState<string | null>(null);
+  const [stepUpSubmitting, setStepUpSubmitting] = useState(false);
+  const [pendingApprovalId, setPendingApprovalId] = useState<string | null>(null);
 
   // Threat Intel State
   const [iocs, setIocs] = useState<IOC[]>([]);
@@ -486,6 +539,12 @@ export function App() {
       }
 
       const data = await res.json();
+      if (data.mfa_required) {
+        setMfaChallengeToken(data.mfa_token);
+        setMfaInputCode("");
+        setMfaError(null);
+        return;
+      }
       localStorage.setItem("sentinelops_token", data.access_token);
       setToken(data.access_token);
       setLoginPassword("");
@@ -493,6 +552,37 @@ export function App() {
       setAuthError(err.message || "Login failed");
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleMfaVerifyLoginSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!mfaChallengeToken) return;
+    setMfaError(null);
+    setMfaSubmitting(true);
+    try {
+      const payload = mfaUseRecovery
+        ? { mfa_token: mfaChallengeToken, recovery_code: mfaInputCode.trim() }
+        : { mfa_token: mfaChallengeToken, totp_code: mfaInputCode.trim() };
+      const res = await fetch(`${API_BASE}/auth/mfa/verify-login`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.detail || "Invalid verification code");
+      }
+      const data = await res.json();
+      localStorage.setItem("sentinelops_token", data.access_token);
+      setToken(data.access_token);
+      setMfaChallengeToken(null);
+      setMfaInputCode("");
+      setLoginPassword("");
+    } catch (err: any) {
+      setMfaError(err.message || "MFA verification failed");
+    } finally {
+      setMfaSubmitting(false);
     }
   };
 
@@ -528,6 +618,144 @@ export function App() {
       setAuthError(err.message || "Registration failed");
     } finally {
       setLoading(false);
+    }
+  };
+
+  // MFA Management Handlers
+  const loadMfaStatus = async () => {
+    if (!token) return;
+    try {
+      const res = await apiCall("/auth/mfa/status");
+      if (res.ok) {
+        const data = await res.json();
+        setMfaStatus(data);
+      }
+    } catch (err) {
+      console.error("Failed to load MFA status", err);
+    }
+  };
+
+  const handleStartMfaEnrollment = async () => {
+    setMfaLoading(true);
+    setMfaActionMsg(null);
+    setEnrollError(null);
+    setConfirmTotpCode("");
+    try {
+      const res = await apiCall("/auth/mfa/enroll", { method: "POST" });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.detail || "Failed to initiate MFA enrollment");
+      }
+      const data = await res.json();
+      setEnrollData(data);
+      setShowEnrollModal(true);
+    } catch (err: any) {
+      setMfaActionMsg(`Error: ${err.message}`);
+    } finally {
+      setMfaLoading(false);
+    }
+  };
+
+  const handleConfirmMfaEnrollment = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setEnrollSubmitting(true);
+    setEnrollError(null);
+    try {
+      const res = await apiCall("/auth/mfa/confirm-enroll", {
+        method: "POST",
+        body: JSON.stringify({ totp_code: confirmTotpCode.trim() }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.detail || "Invalid TOTP verification code. Please check your clock and try again.");
+      }
+      setShowEnrollModal(false);
+      setEnrollData(null);
+      setConfirmTotpCode("");
+      setMfaActionMsg("✓ Two-Factor Authentication has been successfully activated for your account!");
+      await loadMfaStatus();
+      if (user) setUser({ ...user, mfa_enabled: true });
+    } catch (err: any) {
+      setEnrollError(err.message || "Failed to confirm MFA enrollment");
+    } finally {
+      setEnrollSubmitting(false);
+    }
+  };
+
+  const handleDisableMfa = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setDisableSubmitting(true);
+    setDisableError(null);
+    try {
+      const res = await apiCall("/auth/mfa/disable", {
+        method: "POST",
+        body: JSON.stringify({ password: disablePassword, totp_code: disableTotpCode.trim() }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.detail || "Failed to disable MFA");
+      }
+      setShowDisableMfaModal(false);
+      setDisablePassword("");
+      setDisableTotpCode("");
+      setMfaActionMsg("Two-Factor Authentication has been disabled.");
+      await loadMfaStatus();
+      if (user) setUser({ ...user, mfa_enabled: false });
+    } catch (err: any) {
+      setDisableError(err.message);
+    } finally {
+      setDisableSubmitting(false);
+    }
+  };
+
+  const handleRegenerateCodes = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setRegenSubmitting(true);
+    setRegenError(null);
+    try {
+      const res = await apiCall("/auth/mfa/recovery-codes/regenerate", {
+        method: "POST",
+        body: JSON.stringify({ password: regenPassword, totp_code: regenTotpCode.trim() }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.detail || "Failed to regenerate recovery codes");
+      }
+      const data = await res.json();
+      setRegenCodes(data.recovery_codes);
+      setRegenPassword("");
+      setRegenTotpCode("");
+      await loadMfaStatus();
+    } catch (err: any) {
+      setRegenError(err.message);
+    } finally {
+      setRegenSubmitting(false);
+    }
+  };
+
+  const handleStepUpApproveSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!pendingApprovalId) return;
+    setStepUpSubmitting(true);
+    setStepUpError(null);
+    try {
+      const res = await apiCall(`/playbooks/executions/${pendingApprovalId}/approve`, {
+        method: "POST",
+        headers: { "X-MFA-Code": stepUpCode.trim() },
+        body: JSON.stringify({ notes: "Approved with Step-Up MFA" }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.detail || "Step-Up verification failed");
+      }
+      setShowStepUpModal(false);
+      setStepUpCode("");
+      setPendingApprovalId(null);
+      await loadExecutions();
+    } catch (err: any) {
+      setStepUpError(err.message);
+    } finally {
+      setStepUpSubmitting(false);
     }
   };
 
@@ -1124,6 +1352,16 @@ export function App() {
   };
 
   const handleDecideApproval = async (executionId: string, approve: boolean) => {
+    if (approve) {
+      const targetExec = executions.find((ex) => ex.id === executionId);
+      if (targetExec && !targetExec.is_dry_run && user?.mfa_enabled) {
+        setPendingApprovalId(executionId);
+        setStepUpCode("");
+        setStepUpError(null);
+        setShowStepUpModal(true);
+        return;
+      }
+    }
     try {
       const endpoint = `/playbooks/executions/${executionId}/${approve ? "approve" : "reject"}`;
       const res = await apiCall(endpoint, {
@@ -1134,6 +1372,13 @@ export function App() {
         await loadExecutions();
       } else {
         const err = await res.json().catch(() => ({}));
+        if (res.status === 403 && (err.detail || "").toLowerCase().includes("step-up")) {
+          setPendingApprovalId(executionId);
+          setStepUpCode("");
+          setStepUpError(null);
+          setShowStepUpModal(true);
+          return;
+        }
         alert(`Decision error: ${err.detail || "Unable to process decision"}`);
       }
     } catch (err: any) {
@@ -1151,6 +1396,8 @@ export function App() {
     } else if (activeSection === "playbooks") {
       loadPlaybooks();
       loadExecutions();
+    } else if (activeSection === "settings") {
+      loadMfaStatus();
     }
   }, [activeSection, iocPage, iocTypeFilter, iocVerdictFilter, token]);
 
@@ -1168,14 +1415,14 @@ export function App() {
           <div className="tab-buttons" role="tablist">
             <button
               className={`tab-btn ${authTab === "login" ? "active" : ""}`}
-              onClick={() => { setAuthTab("login"); setAuthError(null); }}
+              onClick={() => { setAuthTab("login"); setAuthError(null); setMfaChallengeToken(null); }}
               type="button"
             >
               Log In
             </button>
             <button
               className={`tab-btn ${authTab === "register" ? "active" : ""}`}
-              onClick={() => { setAuthTab("register"); setAuthError(null); }}
+              onClick={() => { setAuthTab("register"); setAuthError(null); setMfaChallengeToken(null); }}
               type="button"
             >
               Register Organization
@@ -1185,7 +1432,56 @@ export function App() {
           {authError && <div className="alert alert-error">{authError}</div>}
           {authSuccess && <div className="alert alert-success">{authSuccess}</div>}
 
-          {authTab === "login" ? (
+          {mfaChallengeToken ? (
+            <form onSubmit={handleMfaVerifyLoginSubmit} className="form-stack">
+              <div style={{ textAlign: "center", marginBottom: "1rem" }}>
+                <span style={{ fontSize: "2rem" }}>🔐</span>
+                <h3 style={{ marginTop: "0.25rem", color: "var(--accent-blue)" }}>Two-Factor Authentication</h3>
+                <p style={{ fontSize: "0.85rem", color: "var(--text-muted)" }}>
+                  {mfaUseRecovery
+                    ? "Enter an emergency 10-character backup recovery code"
+                    : "Enter the 6-digit verification code from your authenticator app"}
+                </p>
+              </div>
+
+              {mfaError && <div className="alert alert-error">{mfaError}</div>}
+
+              <div className="form-group">
+                <label>{mfaUseRecovery ? "Backup Recovery Code" : "6-Digit Security Code"}</label>
+                <input
+                  type="text"
+                  required
+                  autoFocus
+                  placeholder={mfaUseRecovery ? "e.g. A1B2C-D3E4F" : "123456"}
+                  value={mfaInputCode}
+                  onChange={(e) => setMfaInputCode(e.target.value)}
+                  maxLength={mfaUseRecovery ? 20 : 6}
+                  style={{ textAlign: "center", fontSize: "1.25rem", letterSpacing: "0.2rem" }}
+                />
+              </div>
+
+              <button type="submit" className="primary-btn" disabled={mfaSubmitting}>
+                {mfaSubmitting ? "Verifying..." : "Verify & Complete Sign In"}
+              </button>
+
+              <div style={{ display: "flex", justifyContent: "space-between", marginTop: "0.75rem", fontSize: "0.8rem" }}>
+                <button
+                  type="button"
+                  style={{ background: "none", border: "none", color: "var(--accent-blue)", cursor: "pointer", padding: 0 }}
+                  onClick={() => { setMfaUseRecovery(!mfaUseRecovery); setMfaInputCode(""); setMfaError(null); }}
+                >
+                  {mfaUseRecovery ? "Use Authenticator App Code" : "Use Backup Recovery Code"}
+                </button>
+                <button
+                  type="button"
+                  style={{ background: "none", border: "none", color: "var(--text-muted)", cursor: "pointer", padding: 0 }}
+                  onClick={() => { setMfaChallengeToken(null); setMfaInputCode(""); setMfaError(null); }}
+                >
+                  ← Back to Login
+                </button>
+              </div>
+            </form>
+          ) : authTab === "login" ? (
             <form onSubmit={handleLoginSubmit} className="form-stack">
               <div className="form-group">
                 <label htmlFor="login-email">Email Address</label>
@@ -1661,6 +1957,74 @@ export function App() {
                 </div>
                 <button type="submit" className="primary-btn btn-sm">Update Password</button>
               </form>
+            </div>
+
+            {/* Two-Factor Authentication (TOTP) Card */}
+            <div className="card">
+              <div className="card-header-flex">
+                <div>
+                  <h2>Two-Factor Authentication (TOTP)</h2>
+                  <p className="field-hint" style={{ marginTop: "0.25rem" }}>
+                    RFC 6238 time-based one-time password protection and privileged step-up authorization.
+                  </p>
+                </div>
+                {mfaStatus?.mfa_enabled ? (
+                  <span className="badge badge-success">✓ MFA ACTIVE</span>
+                ) : (
+                  <span className="badge badge-inactive">NOT ENROLLED</span>
+                )}
+              </div>
+
+              {mfaActionMsg && <div className="alert alert-info" style={{ marginTop: "1rem" }}>{mfaActionMsg}</div>}
+
+              {mfaStatus?.mfa_enabled ? (
+                <div style={{ marginTop: "1rem" }}>
+                  <div className="meta-list" style={{ marginBottom: "1.25rem" }}>
+                    <div className="meta-item">
+                      <span className="meta-label">Enrolled At</span>
+                      <span className="meta-value">
+                        {mfaStatus.enrolled_at ? new Date(mfaStatus.enrolled_at).toLocaleString() : "Active"}
+                      </span>
+                    </div>
+                    <div className="meta-item">
+                      <span className="meta-label">Backup Recovery Codes</span>
+                      <span className="meta-value">{mfaStatus.recovery_codes_remaining} unused remaining</span>
+                    </div>
+                  </div>
+
+                  <div style={{ display: "flex", gap: "0.75rem", flexWrap: "wrap" }}>
+                    <button
+                      type="button"
+                      className="secondary-btn btn-sm"
+                      onClick={() => { setRegenCodes(null); setRegenError(null); setShowRegenModal(true); }}
+                    >
+                      🔄 Regenerate Recovery Codes
+                    </button>
+                    <button
+                      type="button"
+                      className="secondary-btn btn-sm"
+                      style={{ color: "var(--accent-rose)", borderColor: "rgba(244, 63, 94, 0.4)" }}
+                      onClick={() => { setDisableError(null); setShowDisableMfaModal(true); }}
+                    >
+                      Disable Two-Factor Auth
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <div style={{ marginTop: "1rem" }}>
+                  <p style={{ fontSize: "0.85rem", color: "var(--text-muted)", marginBottom: "1rem" }}>
+                    Protect your administrative and analyst credentials with an authenticator app (Google Authenticator, Microsoft Authenticator, 1Password, or YubiKey). Privileged live response actions require verified MFA.
+                  </p>
+                  <button
+                    type="button"
+                    className="primary-btn btn-sm"
+                    onClick={handleStartMfaEnrollment}
+                    disabled={mfaLoading}
+                  >
+                    {mfaLoading ? "Initializing..." : "🛡️ Set Up Two-Factor Authentication"}
+                  </button>
+                </div>
+              )}
             </div>
           </div>
         )}
@@ -3277,6 +3641,261 @@ export function App() {
                 Close
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL 8: MFA ENROLLMENT */}
+      {showEnrollModal && enrollData && (
+        <div className="modal-overlay" onClick={() => setShowEnrollModal(false)}>
+          <div className="modal-card" onClick={(e) => e.stopPropagation()} style={{ maxWidth: "600px" }}>
+            <header className="modal-header">
+              <h2>Setup Two-Factor Authentication</h2>
+              <button className="close-btn" onClick={() => setShowEnrollModal(false)}>✕</button>
+            </header>
+
+            {enrollError && <div className="alert alert-error">{enrollError}</div>}
+
+            <div style={{ textAlign: "center", margin: "1rem 0" }}>
+              <p style={{ fontSize: "0.9rem", color: "var(--text-muted)", marginBottom: "1rem" }}>
+                Scan the QR code with your authenticator app (Google Authenticator, Microsoft Authenticator, 1Password, or YubiKey).
+              </p>
+              <div style={{ display: "inline-block", background: "white", padding: "12px", borderRadius: "8px" }}>
+                <img src={enrollData.qr_code} alt="TOTP QR Code" style={{ width: "192px", height: "192px", display: "block" }} />
+              </div>
+              <div style={{ marginTop: "1rem" }}>
+                <span className="meta-label">Manual Entry Secret Key</span>
+                <p style={{ fontFamily: "monospace", letterSpacing: "0.15rem", fontSize: "1.1rem", background: "var(--bg-card)", padding: "0.5rem", borderRadius: "4px", display: "inline-block" }}>
+                  {enrollData.secret}
+                </p>
+              </div>
+            </div>
+
+            <div style={{ background: "rgba(148, 163, 184, 0.08)", padding: "1rem", borderRadius: "8px", margin: "1rem 0" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "0.5rem" }}>
+                <strong>⚠️ Backup Recovery Codes (Save these!)</strong>
+                <button
+                  type="button"
+                  className="secondary-btn btn-xs"
+                  onClick={() => {
+                    navigator.clipboard.writeText(enrollData.recovery_codes.join("\n"));
+                    alert("Recovery codes copied to clipboard!");
+                  }}
+                >
+                  📋 Copy Codes
+                </button>
+              </div>
+              <p style={{ fontSize: "0.8rem", color: "var(--text-muted)", marginBottom: "0.75rem" }}>
+                If you lose access to your device, each recovery code can be used once to access your account.
+              </p>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.4rem", fontFamily: "monospace", fontSize: "0.85rem" }}>
+                {enrollData.recovery_codes.map((rc, idx) => (
+                  <div key={idx} style={{ background: "var(--bg-main)", padding: "0.3rem 0.5rem", borderRadius: "4px" }}>
+                    {idx + 1}. {rc}
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <form onSubmit={handleConfirmMfaEnrollment} className="form-stack">
+              <div className="form-group">
+                <label>Verification Code from Authenticator App *</label>
+                <input
+                  type="text"
+                  required
+                  autoFocus
+                  placeholder="6-digit code (e.g. 123456)"
+                  value={confirmTotpCode}
+                  onChange={(e) => setConfirmTotpCode(e.target.value)}
+                  maxLength={6}
+                  style={{ textAlign: "center", fontSize: "1.25rem", letterSpacing: "0.2rem" }}
+                />
+              </div>
+
+              <div className="modal-footer">
+                <button type="button" className="secondary-btn" onClick={() => setShowEnrollModal(false)}>
+                  Cancel
+                </button>
+                <button type="submit" className="primary-btn" disabled={enrollSubmitting}>
+                  {enrollSubmitting ? "Activating..." : "Verify & Activate MFA"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL 9: DISABLE MFA */}
+      {showDisableMfaModal && (
+        <div className="modal-overlay" onClick={() => setShowDisableMfaModal(false)}>
+          <div className="modal-card" onClick={(e) => e.stopPropagation()} style={{ maxWidth: "450px" }}>
+            <header className="modal-header">
+              <h2>Disable Two-Factor Authentication</h2>
+              <button className="close-btn" onClick={() => setShowDisableMfaModal(false)}>✕</button>
+            </header>
+
+            {disableError && <div className="alert alert-error">{disableError}</div>}
+
+            <form onSubmit={handleDisableMfa} className="form-stack">
+              <p style={{ fontSize: "0.85rem", color: "var(--text-muted)" }}>
+                Disabling MFA reduces account security and removes Step-Up privileges for live playbook containment.
+              </p>
+              <div className="form-group">
+                <label>Current Password *</label>
+                <input
+                  type="password"
+                  required
+                  placeholder="••••••••••••"
+                  value={disablePassword}
+                  onChange={(e) => setDisablePassword(e.target.value)}
+                />
+              </div>
+              <div className="form-group">
+                <label>Authenticator Code *</label>
+                <input
+                  type="text"
+                  required
+                  placeholder="6-digit TOTP code"
+                  value={disableTotpCode}
+                  onChange={(e) => setDisableTotpCode(e.target.value)}
+                  maxLength={6}
+                />
+              </div>
+              <div className="modal-footer">
+                <button type="button" className="secondary-btn" onClick={() => setShowDisableMfaModal(false)}>
+                  Cancel
+                </button>
+                <button type="submit" className="primary-btn" style={{ background: "var(--accent-rose)", borderColor: "var(--accent-rose)" }} disabled={disableSubmitting}>
+                  {disableSubmitting ? "Disabling..." : "Confirm & Disable MFA"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL 10: REGENERATE RECOVERY CODES */}
+      {showRegenModal && (
+        <div className="modal-overlay" onClick={() => setShowRegenModal(false)}>
+          <div className="modal-card" onClick={(e) => e.stopPropagation()} style={{ maxWidth: "500px" }}>
+            <header className="modal-header">
+              <h2>Regenerate Recovery Codes</h2>
+              <button className="close-btn" onClick={() => setShowRegenModal(false)}>✕</button>
+            </header>
+
+            {regenError && <div className="alert alert-error">{regenError}</div>}
+
+            {regenCodes ? (
+              <div>
+                <div className="alert alert-success">
+                  ✓ 10 new recovery codes generated! Previous recovery codes are now invalidated.
+                </div>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.4rem", fontFamily: "monospace", margin: "1rem 0" }}>
+                  {regenCodes.map((code, idx) => (
+                    <div key={idx} style={{ background: "var(--bg-card)", padding: "0.35rem 0.5rem", borderRadius: "4px" }}>
+                      {idx + 1}. {code}
+                    </div>
+                  ))}
+                </div>
+                <div className="modal-footer">
+                  <button
+                    type="button"
+                    className="secondary-btn"
+                    onClick={() => {
+                      navigator.clipboard.writeText(regenCodes.join("\n"));
+                      alert("Copied recovery codes to clipboard!");
+                    }}
+                  >
+                    📋 Copy All
+                  </button>
+                  <button type="button" className="primary-btn" onClick={() => { setShowRegenModal(false); setRegenCodes(null); }}>
+                    Done
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <form onSubmit={handleRegenerateCodes} className="form-stack">
+                <p style={{ fontSize: "0.85rem", color: "var(--text-muted)" }}>
+                  Generating new recovery codes will immediately invalidate all previously issued backup recovery codes.
+                </p>
+                <div className="form-group">
+                  <label>Current Password *</label>
+                  <input
+                    type="password"
+                    required
+                    placeholder="••••••••••••"
+                    value={regenPassword}
+                    onChange={(e) => setRegenPassword(e.target.value)}
+                  />
+                </div>
+                <div className="form-group">
+                  <label>Authenticator Code *</label>
+                  <input
+                    type="text"
+                    required
+                    placeholder="6-digit TOTP code"
+                    value={regenTotpCode}
+                    onChange={(e) => setRegenTotpCode(e.target.value)}
+                    maxLength={6}
+                  />
+                </div>
+                <div className="modal-footer">
+                  <button type="button" className="secondary-btn" onClick={() => setShowRegenModal(false)}>
+                    Cancel
+                  </button>
+                  <button type="submit" className="primary-btn" disabled={regenSubmitting}>
+                    {regenSubmitting ? "Generating..." : "Generate New Codes"}
+                  </button>
+                </div>
+              </form>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* MODAL 11: PRIVILEGED ACTION STEP-UP PROMPT */}
+      {showStepUpModal && (
+        <div className="modal-overlay" onClick={() => setShowStepUpModal(false)}>
+          <div className="modal-card" onClick={(e) => e.stopPropagation()} style={{ maxWidth: "450px" }}>
+            <header className="modal-header">
+              <h2>Privileged Action Authorization</h2>
+              <button className="close-btn" onClick={() => setShowStepUpModal(false)}>✕</button>
+            </header>
+
+            {stepUpError && <div className="alert alert-error">{stepUpError}</div>}
+
+            <form onSubmit={handleStepUpApproveSubmit} className="form-stack">
+              <div style={{ textAlign: "center", marginBottom: "1rem" }}>
+                <span style={{ fontSize: "2rem" }}>🛡️</span>
+                <h3 style={{ marginTop: "0.25rem", color: "var(--accent-amber)" }}>Step-Up Verification Required</h3>
+                <p style={{ fontSize: "0.85rem", color: "var(--text-muted)" }}>
+                  Live response playbook actions can disrupt host networks and user sessions. Enter your authenticator security code to authorize execution.
+                </p>
+              </div>
+
+              <div className="form-group">
+                <label>Authenticator Security Code *</label>
+                <input
+                  type="text"
+                  required
+                  autoFocus
+                  placeholder="123456"
+                  value={stepUpCode}
+                  onChange={(e) => setStepUpCode(e.target.value)}
+                  maxLength={6}
+                  style={{ textAlign: "center", fontSize: "1.25rem", letterSpacing: "0.2rem" }}
+                />
+              </div>
+
+              <div className="modal-footer">
+                <button type="button" className="secondary-btn" onClick={() => setShowStepUpModal(false)}>
+                  Cancel
+                </button>
+                <button type="submit" className="primary-btn" disabled={stepUpSubmitting}>
+                  {stepUpSubmitting ? "Authorizing..." : "Authorize Live Action"}
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}

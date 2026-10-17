@@ -20,7 +20,7 @@ from app.models.playbook import (
     ResponsePlaybook,
 )
 from app.models.tenant import Tenant
-from app.models.user import User, UserRole
+from app.models.user import User, UserRecoveryCode, UserRole
 from app.models.webhook import DeliveryStatus, DestinationType, NotificationDestination, WebhookDelivery
 
 __all__ = [
@@ -49,6 +49,7 @@ __all__ = [
     "ThreatSeverity",
     "ThreatVerdict",
     "User",
+    "UserRecoveryCode",
     "UserRole",
     "WebhookDelivery",
 ]

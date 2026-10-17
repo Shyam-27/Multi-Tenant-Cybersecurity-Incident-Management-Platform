@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 from app.core.database import get_db
 from app.core.security import (
     create_access_token,
+    create_mfa_challenge_token,
     hash_password,
     needs_rehash,
     revoke_token,
@@ -134,6 +135,30 @@ def login(data: LoginRequest, request: Request, db: Session = Depends(get_db)) -
 
     if needs_rehash(user.password_hash):
         user.password_hash = hash_password(data.password)
+
+    if user.mfa_enabled:
+        mfa_challenge_token = create_mfa_challenge_token(user.id)
+        record_audit_event(
+            db=db,
+            action="LOGIN_MFA_CHALLENGE_ISSUED",
+            resource_type="user",
+            resource_id=str(user.id),
+            outcome=AuditOutcome.SUCCESS,
+            actor_user=user,
+            actor_type=ActorType.USER,
+            tenant_id=user.tenant_id,
+            details={"email": email},
+            request=request,
+        )
+        db.commit()
+        return TokenResponse(
+            access_token=None,
+            token_type="bearer",
+            mfa_required=True,
+            mfa_token=mfa_challenge_token,
+            message="MFA authentication required. Please submit your TOTP code or recovery code to /api/v1/auth/mfa/verify-login.",
+        )
+
     user.last_login_at = datetime.now(timezone.utc)
 
     record_audit_event(
@@ -164,6 +189,12 @@ def oauth2_token(form_data: OAuth2PasswordRequestForm = Depends(), request: Requ
         raise invalid_credentials
     if not verify_password(form_data.password, user.password_hash):
         raise invalid_credentials
+
+    if user.mfa_enabled:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="MFA authentication required. Please use /api/v1/auth/login and /api/v1/auth/mfa/verify-login to complete authentication.",
+        )
 
     user.last_login_at = datetime.now(timezone.utc)
     record_audit_event(

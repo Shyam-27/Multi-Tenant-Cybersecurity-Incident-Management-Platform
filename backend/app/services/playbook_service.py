@@ -18,6 +18,7 @@ from app.models.playbook import (
 )
 from app.models.user import User, UserRole
 from app.services.audit_service import record_audit_event
+from app.services.mfa_service import verify_step_up_mfa
 
 logger = logging.getLogger("sentinelops.playbooks")
 
@@ -185,14 +186,29 @@ def trigger_playbook_execution(
     parameters: dict[str, Any] | None = None,
     incident_id: UUID | None = None,
     override_dry_run: bool | None = None,
+    step_up_token: str | None = None,
+    mfa_code: str | None = None,
 ) -> PlaybookExecution:
     """
     Initiates a playbook run. If requires_approval is True and not in dry_run,
     creates a pending approval gate. Otherwise executes actions immediately.
+    Enforces Step-Up MFA for live disruptive execution.
     """
     params = parameters or {}
     is_dry_run = override_dry_run if override_dry_run is not None else playbook.is_dry_run
     needs_approval = playbook.requires_approval and not is_dry_run
+
+    step_up_method = None
+    if not is_dry_run:
+        if actor_user.mfa_enabled or step_up_token or mfa_code:
+            step_up_method = verify_step_up_mfa(
+                db=db,
+                user=actor_user,
+                action="playbook_execution",
+                target_id=playbook.id,
+                step_up_token=step_up_token,
+                mfa_code=mfa_code,
+            )
 
     initial_status = (
         ExecutionStatus.PENDING_APPROVAL.value if needs_approval else ExecutionStatus.RUNNING.value
@@ -208,6 +224,9 @@ def trigger_playbook_execution(
         is_dry_run=is_dry_run,
         parameters=params,
         step_results=[],
+        step_up_verified_at=datetime.now(timezone.utc) if step_up_method else None,
+        step_up_verified_by_id=actor_user.id if step_up_method else None,
+        step_up_method=step_up_method,
     )
     db.add(execution)
     db.flush()
@@ -302,10 +321,13 @@ def decide_playbook_approval(
     approver: User,
     approved: bool,
     notes: str | None = None,
+    step_up_token: str | None = None,
+    mfa_code: str | None = None,
 ) -> PlaybookExecution:
     """
     Approve or reject a pending playbook execution.
-    Enforces tenant boundaries, serializing locks, and anti-self-approval protection.
+    Enforces tenant boundaries, serializing locks, anti-self-approval protection,
+    and Step-Up MFA for live execution approvals.
     """
     execution = db.scalar(
         select(PlaybookExecution)
@@ -352,6 +374,23 @@ def decide_playbook_approval(
         )
         db.commit()
         return execution
+
+    # Step-Up MFA verification for live execution approval
+    if not execution.is_dry_run:
+        if approver.mfa_enabled or step_up_token or mfa_code:
+            step_up_method = verify_step_up_mfa(
+                db=db,
+                user=approver,
+                action="playbook_approval",
+                target_id=execution.id,
+                step_up_token=step_up_token,
+                mfa_code=mfa_code,
+            )
+            approval.step_up_verified_at = now
+            approval.step_up_method = step_up_method
+            execution.step_up_verified_at = now
+            execution.step_up_verified_by_id = approver.id
+            execution.step_up_method = step_up_method
 
     # Approval granted: execute actions now
     approval.status = ApprovalStatus.APPROVED.value

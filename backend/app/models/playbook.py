@@ -92,11 +92,17 @@ class PlaybookExecution(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now(), index=True)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
+    # Phase 7A: Privileged-Action Step-Up Verification
+    step_up_verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    step_up_verified_by_id: Mapped[UUID | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    step_up_method: Mapped[str | None] = mapped_column(String(30), nullable=True)
+
     # Relationships
     playbook: Mapped["ResponsePlaybook"] = relationship(back_populates="executions")
     tenant: Mapped["Tenant"] = relationship()
     incident: Mapped["Incident | None"] = relationship()
-    triggered_by: Mapped["User"] = relationship()
+    triggered_by: Mapped["User"] = relationship(foreign_keys=[triggered_by_id])
+    step_up_verified_by: Mapped["User | None"] = relationship(foreign_keys=[step_up_verified_by_id])
     approval: Mapped["PlaybookApproval | None"] = relationship(back_populates="execution", uselist=False, cascade="all, delete-orphan")
 
     __table_args__ = (
@@ -119,6 +125,10 @@ class PlaybookApproval(Base):
     decision_notes: Mapped[str | None] = mapped_column(Text, nullable=True)
     decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+    # Phase 7A: Privileged-Action Step-Up Verification
+    step_up_verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    step_up_method: Mapped[str | None] = mapped_column(String(30), nullable=True)
 
     # Relationships
     execution: Mapped["PlaybookExecution"] = relationship(back_populates="approval")

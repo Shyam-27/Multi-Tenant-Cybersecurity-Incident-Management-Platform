@@ -9,6 +9,7 @@ from sqlalchemy.pool import StaticPool
 
 os.environ.setdefault("DATABASE_URL", "sqlite+pysqlite:///:memory:")
 os.environ["JWT_SECRET_KEY"] = "test-only-secret-key-with-at-least-32-characters"
+os.environ["MFA_ENCRYPTION_KEY"] = "w9Wf1V7BTCTmaIJIXhRa52bU846km9Ow5JJz843zqoM="
 
 from app.core.config import get_settings
 from app.core.database import Base, get_db

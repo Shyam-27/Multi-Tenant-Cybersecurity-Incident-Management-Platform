@@ -30,7 +30,17 @@ class User(Base):
     last_login_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
+
+    # Phase 7A: MFA & TOTP fields
+    mfa_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
+    totp_secret_encrypted: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    mfa_enrolled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_totp_timestep: Mapped[int | None] = mapped_column(nullable=True)
+    mfa_failed_attempts: Mapped[int] = mapped_column(default=0, server_default="0", nullable=False)
+    mfa_locked_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
     tenant: Mapped["Tenant | None"] = relationship(back_populates="users")
+    recovery_codes: Mapped[list["UserRecoveryCode"]] = relationship(back_populates="user", cascade="all, delete-orphan")
 
     @property
     def full_name(self) -> str:
@@ -38,4 +48,24 @@ class User(Base):
 
     __table_args__ = (
         Index("ix_users_tenant_id_role", "tenant_id", "role"),
+        Index("ix_users_mfa_enabled", "mfa_enabled"),
+    )
+
+
+class UserRecoveryCode(Base):
+    """Hashed single-use recovery code for MFA fallback authentication."""
+
+    __tablename__ = "user_recovery_codes"
+
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    user_id: Mapped[UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    code_hash: Mapped[str] = mapped_column(String(255), nullable=False)
+    is_used: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
+    used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+    user: Mapped["User"] = relationship(back_populates="recovery_codes")
+
+    __table_args__ = (
+        Index("ix_user_recovery_codes_user_used", "user_id", "is_used"),
     )

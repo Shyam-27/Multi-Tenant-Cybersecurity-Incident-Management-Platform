@@ -97,6 +97,13 @@ Browser (React/TypeScript :5173) ──► FastAPI Backend (:8000) ──► Pos
 | `/api/v1/incidents/{id}/notes` | POST | `TENANT_ADMIN`, `SECURITY_ANALYST` | Append chronological investigation note. |
 | `/api/v1/incidents/{id}/evidence` | GET | All authenticated | List evidence artifacts attached to incident. |
 | `/api/v1/incidents/{id}/evidence` | POST | `TENANT_ADMIN`, `SECURITY_ANALYST` | Upload evidence artifact (max 10 MiB, magic byte validated). |
+| `/api/v1/auth/mfa/enroll` | POST | All authenticated | Initiate TOTP enrollment (returns QR code & recovery codes). |
+| `/api/v1/auth/mfa/confirm-enroll` | POST | All authenticated | Verify first TOTP code and activate MFA for account. |
+| `/api/v1/auth/mfa/status` | GET | All authenticated | Inspect MFA status and remaining unused recovery codes. |
+| `/api/v1/auth/mfa/disable` | POST | All authenticated | Disable MFA (requires password and current TOTP). |
+| `/api/v1/auth/mfa/recovery-codes/regenerate` | POST | All authenticated | Invalidate and generate 10 new recovery codes. |
+| `/api/v1/auth/mfa/verify-login` | POST | Public (challenge token) | Complete 2-stage login with TOTP or recovery code. |
+| `/api/v1/auth/mfa/step-up` | POST | All authenticated | Issue short-lived Step-Up token for privileged action. |
 | `/api/v1/incidents/{id}/evidence/{eid}/download` | GET | All authenticated | Download evidence artifact (`nosniff`, tenant-isolated). |
 | `/api/v1/iocs` | GET | All authenticated | List/search tenant Indicators of Compromise. |
 | `/api/v1/iocs` | POST | `TENANT_ADMIN`, `SECURITY_ANALYST` | Record new normalized IOC. |
@@ -105,8 +112,8 @@ Browser (React/TypeScript :5173) ──► FastAPI Backend (:8000) ──► Pos
 | `/api/v1/destinations` | POST | `TENANT_ADMIN`, `SUPER_ADMIN` | Register webhook destination (SSRF protected). |
 | `/api/v1/destinations/{id}/test` | POST | `TENANT_ADMIN`, `SECURITY_ANALYST` | Dispatch synthetic test alert and record delivery log. |
 | `/api/v1/playbooks` | GET | All authenticated | List configured response playbooks. |
-| `/api/v1/playbooks/{id}/execute` | POST | `TENANT_ADMIN`, `SECURITY_ANALYST` | Trigger playbook execution (defaults to safe dry-run). |
-| `/api/v1/playbooks/executions/{id}/approve` | POST | `TENANT_ADMIN`, `SUPER_ADMIN` | Dual-authorization peer approval for pending executions. |
+| `/api/v1/playbooks/{id}/execute` | POST | `TENANT_ADMIN`, `SECURITY_ANALYST` | Trigger playbook execution (Step-Up MFA required for live actions). |
+| `/api/v1/playbooks/executions/{id}/approve` | POST | `TENANT_ADMIN`, `SUPER_ADMIN` | Dual-authorization approval (Step-Up MFA required for live actions). |
 | `/api/v1/audit-events` | GET | All authenticated | Paginated, filtered audit events (tenant-isolated). |
 | `/api/v1/audit-events/verify-chain` | GET | `TENANT_ADMIN`, `SUPER_ADMIN` | Cryptographic SHA-256 chain verification. |
 
@@ -120,7 +127,7 @@ Migrations execute automatically upon container startup (`alembic upgrade head`)
   ```powershell
   docker compose exec backend alembic current
   ```
-  *(Expected: `20261016_0007 (head)`)*
+  *(Expected: `20261017_0008 (head)`)*
 - **Apply Migrations**:
   ```powershell
   docker compose exec backend alembic upgrade head
@@ -140,9 +147,16 @@ Run the full pytest suite in the isolated test environment:
 docker compose exec backend pytest -v
 ```
 
-**98 automated test cases** cover:
+**116 automated test cases** cover:
 - Health probes and database connectivity.
 - Authentication, Argon2id hashing, and JWT lifecycle/logout revocation.
+- TOTP Multi-Factor Authentication (RFC 6238), provisioning URI, self-contained SVG QR codes.
+- Authenticated AES-GCM/Fernet encryption of TOTP secrets at rest (`MFA_ENCRYPTION_KEY`).
+- Two-stage login with scoped challenge token and credential isolation.
+- Single-use hashed backup recovery codes with row-locked atomic consumption.
+- Anti-replay defense on TOTP time steps (`last_totp_timestep`).
+- Brute-force account lockout protection (5 failed attempts = 15-minute lock).
+- Step-Up MFA for live response playbook execution and live playbook approval (`X-MFA-Code`, `X-Step-Up-Token`).
 - RBAC permissions (Super Admin, Tenant Admin, Analyst, Viewer).
 - User management and anti-privilege escalation.
 - Multi-tenant data isolation on users, incidents, notes, evidence, audit logs, IOCs, destinations, and playbooks (strict 404 policy).

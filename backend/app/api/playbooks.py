@@ -1,7 +1,7 @@
 from math import ceil
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session, joinedload
 
@@ -149,6 +149,8 @@ def update_playbook(
 def execute_playbook(
     id: UUID,
     payload: TriggerExecutionRequest | None = None,
+    x_mfa_code: str | None = Header(default=None, alias="X-MFA-Code"),
+    x_step_up_token: str | None = Header(default=None, alias="X-Step-Up-Token"),
     current_user: User = Depends(require_roles(UserRole.TENANT_ADMIN, UserRole.SECURITY_ANALYST, UserRole.SUPER_ADMIN)),
     db: Session = Depends(get_db),
 ) -> PlaybookExecution:
@@ -165,20 +167,31 @@ def execute_playbook(
     params = payload.parameters if payload else {}
     inc_id = payload.incident_id if payload else None
     override_dry_run = payload.override_dry_run if payload else None
+    mfa_code = (payload.mfa_code if payload and payload.mfa_code else None) or x_mfa_code
+    step_up_token = (payload.step_up_token if payload and payload.step_up_token else None) or x_step_up_token
 
     # Analysts are restricted to dry-run only unless approved
     if current_user.role == UserRole.SECURITY_ANALYST.value and override_dry_run is False:
         override_dry_run = None  # Force playbook default or approval requirements
 
-    execution = trigger_playbook_execution(
-        db=db,
-        playbook=playbook,
-        actor_user=current_user,
-        parameters=params,
-        incident_id=inc_id,
-        override_dry_run=override_dry_run,
-    )
-    return execution
+    try:
+        execution = trigger_playbook_execution(
+            db=db,
+            playbook=playbook,
+            actor_user=current_user,
+            parameters=params,
+            incident_id=inc_id,
+            override_dry_run=override_dry_run,
+            step_up_token=step_up_token,
+            mfa_code=mfa_code,
+        )
+        return execution
+    except ValueError as exc:
+        if "not found" in str(exc).lower():
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+        if "step-up" in str(exc).lower() or "mfa" in str(exc).lower():
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc)) from exc
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
 
 @router.get("/executions/list", response_model=ExecutionListResponse)
@@ -233,10 +246,14 @@ def get_execution(
 def approve_execution(
     id: UUID,
     payload: ApprovalDecisionRequest | None = None,
+    x_mfa_code: str | None = Header(default=None, alias="X-MFA-Code"),
+    x_step_up_token: str | None = Header(default=None, alias="X-Step-Up-Token"),
     current_user: User = Depends(require_roles(UserRole.TENANT_ADMIN, UserRole.SUPER_ADMIN)),
     db: Session = Depends(get_db),
 ) -> PlaybookExecution:
     notes = payload.notes if payload else None
+    mfa_code = (payload.mfa_code if payload and payload.mfa_code else None) or x_mfa_code
+    step_up_token = (payload.step_up_token if payload and payload.step_up_token else None) or x_step_up_token
     try:
         updated = decide_playbook_approval(
             db=db,
@@ -244,11 +261,15 @@ def approve_execution(
             approver=current_user,
             approved=True,
             notes=notes,
+            step_up_token=step_up_token,
+            mfa_code=mfa_code,
         )
         return updated
     except ValueError as exc:
         if "not found" in str(exc).lower():
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+        if "step-up" in str(exc).lower() or "mfa" in str(exc).lower():
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc)) from exc
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
 

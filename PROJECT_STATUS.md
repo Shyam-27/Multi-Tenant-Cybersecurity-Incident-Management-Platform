@@ -4,7 +4,7 @@
 
 The **Multi-Tenant Cybersecurity Incident Management Platform** (SentinelOps) is designed as an enterprise-grade SaaS application for tracking, analyzing, enriching, and resolving cybersecurity incidents across isolated customer organizations.
 
-This status document reflects the completion of **Phase 6: Threat Intelligence Feeds, SIEM Alerting & Incident Response Playbooks** and **Phase 6.1: Security Hardening & End-to-End Verification**.
+This status document reflects the completion of **Phase 6: Threat Intelligence Feeds, SIEM Alerting & Incident Response Playbooks**, **Phase 6.1: Security Hardening & End-to-End Verification**, and **Phase 7A: MFA, TOTP & Privileged-Action Security**.
 
 ---
 
@@ -17,7 +17,13 @@ This status document reflects the completion of **Phase 6: Threat Intelligence F
 - **ORM & DB Driver**: SQLAlchemy `2.0.43`, Psycopg `3.2.9` (binary)
 - **Migrations**: Alembic `1.16.5`
 - **Data Validation & Settings**: Pydantic `2.14.1`, Pydantic Settings `2.10.1`, Email Validator `2.2.0`
-- **Security & Cryptography**: Argon2-cffi `25.1.0` (Argon2id password hashing), PyJWT `2.10.1` (HS256 tokens), Python `hashlib` (SHA-256 cryptographic hashing & hash chaining)
+- **Security & Cryptography**:
+  - Argon2-cffi `25.1.0` (Argon2id password hashing)
+  - PyJWT `2.10.1` (HS256 tokens, scoped challenge tokens, step-up tokens)
+  - Cryptography `50.0.2` (Fernet / AES-GCM authenticated secret encryption at rest)
+  - PyOTP `2.10.0` (RFC 6238 TOTP verification, URI generation, anti-replay protection)
+  - Qrcode `8.2` (Self-contained SVG QR code rendering)
+  - Python `hashlib` & `secrets` (Salted SHA-256 recovery code hashing, hash chaining, constant-time comparisons)
 - **HTTP Client**: HTTPX `0.28.1` (for external threat intel API adapters and SIEM webhook dispatches)
 - **Testing**: Pytest `8.4.1`, HTTPX `0.28.1`
 
@@ -176,7 +182,7 @@ D:\CyberSecurity_Incident_Managment_Platform
 
 - **Database Engine**: PostgreSQL 16 Alpine running on port `5432` with volume `postgres_data`.
 - **Health**: Healthy.
-- **Alembic Status**: Current head revision is `20261016_0007`.
+- **Alembic Status**: Current head revision is `20261017_0008`.
 - **Applied Migrations**:
   1. `20260823_0001_create_users`: Users table.
   2. `20260823_0002_add_tenants`: Tenants table and `users.tenant_id` foreign key.
@@ -185,10 +191,12 @@ D:\CyberSecurity_Incident_Managment_Platform
   5. `20261013_0005_create_evidence`: Evidence table with composite index and metadata.
   6. `20261013_0006_create_audit_events`: Audit events table with tenant hash chaining and indexing.
   7. `20261016_0007_phase6_threat_intel_siem_playbooks`: Indicators of compromise, notification destinations, webhook deliveries, response playbooks, playbook executions, and playbook approvals tables with composite tenant indexes.
+  8. `20261017_0008_mfa_totp_step_up`: MFA/TOTP columns and lockout controls on `users`, `user_recovery_codes` table with row locking, and step-up authorization columns on `playbook_executions` and `playbook_approvals`.
 - **Current Tables in Database**:
-  - `alembic_version` (revision: `20261016_0007`)
+  - `alembic_version` (revision: `20261017_0008`)
   - `tenants`
   - `users`
+  - `user_recovery_codes`
   - `incidents`
   - `incident_notes`
   - `evidence`
@@ -205,14 +213,14 @@ D:\CyberSecurity_Incident_Managment_Platform
 ## 6. Test Results Summary
 
 Executed inside the running backend container (`docker compose exec backend pytest -v`):
-- **Total Test Cases**: 109
-- **Passing**: 109 (100%)
+- **Total Test Cases**: 116
+- **Passing**: 116 (100%)
 - **Failing**: 0
 - **Warnings**: 1 (Deprecated AnyIO import warning in Starlette test client)
-- **Duration**: ~60s
+- **Duration**: ~56s
 
 Frontend compilation test:
-- `docker compose exec frontend npm run build`: Built production bundle cleanly in 1.26s with zero errors.
+- `docker compose exec frontend npm run build`: Built production bundle cleanly in 1.00s with zero errors (`tsc -b && vite build`).
 
 ---
 
@@ -220,4 +228,4 @@ Frontend compilation test:
 
 1. **Scheduled Threat Feed Sync**: Periodic polling worker for threat feed updates and expired cache eviction.
 2. **Advanced Playbook Triggers**: Condition-based automatic trigger evaluation on ingested evidence or real-time security events.
-3. **Multi-Factor Authentication (MFA/TOTP)**: Hardware token and authenticator app enforcement for administrative and privileged containment actions.
+3. **WebAuthn / FIDO2 Hardware Key Support**: Hardware token biometric authentication via WebAuthn protocol for high-security SOC workstations.
