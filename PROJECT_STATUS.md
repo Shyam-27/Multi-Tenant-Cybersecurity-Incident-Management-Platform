@@ -178,7 +178,7 @@ D:\CyberSecurity_Incident_Managment_Platform
 
 | Feature | Status | Details |
 |---|---|---|
-| **API Health Probes** (`GET /health`, `GET /api/v1/health`) | **VERIFIED** | Probes PostgreSQL with `SELECT 1`. Returns `{"status": "ok", "database": "ok"}` with HTTP 200. |
+| **API Health Probes** (`GET /health`, `GET /api/v1/health`, `GET /api/v1/health/live`, `GET /api/v1/health/ready`) | **VERIFIED** | Probes process availability (liveness), PostgreSQL `SELECT 1`, and Redis broker readiness. Distinguishes application liveness from infrastructure readiness. |
 | **Password Hashing & Strength** | **VERIFIED** | Uses Argon2id (`argon2.PasswordHasher`). Tested and verified in `test_auth.py` and `test_security_and_tenancy.py`. |
 | **Organization Registration** (`POST /api/v1/auth/register`) | **VERIFIED** | Provisions Tenant and initial `TENANT_ADMIN`. Records `organization_registered` audit event. |
 | **User Login & Session Tokens** (`POST /api/v1/auth/login`) | **VERIFIED** | Timing-safe Argon2 verification, active check, issues HS256 JWT tokens. Records `login_success` and `login_failure` audit events. |
@@ -193,13 +193,13 @@ D:\CyberSecurity_Incident_Managment_Platform
 | **Durable Background Processing & Worker Queues** (`Celery + Redis`) | **VERIFIED** | Asynchronous task execution with Celery 5.4.0 and Redis 7. Webhook delivery intent persisted with `PENDING` status before worker acknowledgment. Concurrent execution protection via row-level locks. Exponential backoff with bounded jitter (`min(300, 2^(attempt-1)*10) + jitter`), transient vs. permanent error classification (4xx immediately marked terminal failure), max 5 retry attempts. Background job tracking model (`BackgroundJob`), tenant-isolated jobs API (`/api/v1/jobs`), automated pending delivery recovery beat schedule, and periodic threat intelligence cache refresh beat schedule. Broker outage resilience ensures delivery intent is safely persisted in PostgreSQL even if Redis is temporarily unavailable. |
 | **Automated Incident Response & Dynamic Playbook Triggers** (`/api/v1/playbooks`) | **VERIFIED** | Event-driven playbook evaluation triggered by incident escalation to `CRITICAL`, detection/enrichment of `MALICIOUS` IOCs, or multi-field rule matching (`RULE_MATCH`). Strictly transactional: evaluations enqueue after commit. Database unique constraints on `(tenant_id, trigger_event_id)` prevent duplicate executions across concurrent workers or task retries. Enforces configurable cooldown windows, active execution suppression, safe simulation defaults (DRY RUN), and unconditional forced dual-authorization approval workflow for live actions. Live execution continues to require Step-Up MFA and strictly enforces anti-self-approval. |
 | **Frontend SOC Operations Dashboard** | **VERIFIED** | Integrated navigation tabs for Incidents, Threat Intel, SIEM & Webhooks, Response Playbooks, Team Directory, Audit Trail, and Account Security. Modal drawers for multi-provider IOC intelligence, live test pings, delivery log viewer with retry action, playbook execution step traces with trigger source/reason attribution, and background enrich queueing. |
-| **Automated Test Suite** | **VERIFIED** | 152 pytest test cases covering all platform phases and security hardening verification with 100% pass rate. |
+| **Automated Test Suite** | **VERIFIED** | 173 pytest test cases covering all platform phases and security hardening verification with 100% pass rate. |
 
 ---
 
 ## 5. Database and Migration Status
 
-- **Database Engine**: PostgreSQL 16 Alpine running on port `5432` with volume `postgres_data`.
+- **Database Engine**: PostgreSQL 16 Alpine running on port `5432` (bound to `127.0.0.1` loopback for host security) with volume `postgres_data`.
 - **Health**: Healthy.
 - **Alembic Status**: Current head revision is `20261018_0010`.
 - **Applied Migrations**:
@@ -235,14 +235,14 @@ D:\CyberSecurity_Incident_Managment_Platform
 ## 6. Test Results Summary
 
 Executed inside the running backend container (`docker compose exec backend pytest -q`):
-- **Total Test Cases**: 152
-- **Passing**: 152 (100%)
+- **Total Test Cases**: 173
+- **Passing**: 173 (100%)
 - **Failing**: 0
 - **Warnings**: 1 (Deprecated AnyIO import warning in Starlette test client)
-- **Duration**: ~79s
+- **Duration**: ~86s
 
 Frontend compilation test:
-- `docker compose exec frontend npm run build`: Built production bundle cleanly in 1.97s with zero errors (`tsc -b && vite build`).
+- `docker compose exec frontend npm run build`: Built production bundle cleanly in 1.39s with zero errors (`tsc -b && vite build`).
 
 ---
 

@@ -160,8 +160,8 @@ Run the full pytest suite in the isolated test environment:
 docker compose exec backend pytest -q
 ```
 
-**152 automated test cases** cover:
-- Health probes and database connectivity.
+**173 automated test cases** cover:
+- Health probes and database connectivity (`/health`, `/health/live`, `/health/ready`).
 - Authentication, Argon2id hashing, and JWT lifecycle/logout revocation.
 - TOTP Multi-Factor Authentication (RFC 6238), provisioning URI, self-contained SVG QR codes.
 - Authenticated AES-GCM/Fernet encryption of TOTP secrets at rest (`MFA_ENCRYPTION_KEY`).
@@ -184,6 +184,7 @@ docker compose exec backend pytest -q
 - Background IOC threat intelligence refresh: non-blocking async endpoint, periodic scheduled refresh, anti-tampering verdict preservation (provider outages never become BENIGN).
 - Automated Incident Response & Dynamic Playbook Triggers: incident escalation to CRITICAL, malicious IOC detection with verified incident association, multi-field rule matching (`RULE_MATCH`), atomic database deduplication via unique constraint `(tenant_id, trigger_event_id)`, active execution suppression, configurable cooldowns, rule versioning, safe simulation defaults (DRY RUN), forced dual-authorization approval workflow for live actions, and anti-self-approval protection.
 - Playbook dry-run simulation, credential revocation, anti-privilege escalation, loopback shield, dual-authorization approval, and anti-self-approval rejection.
+- Database backup and recovery verification via `pg_dump` and `psql` restore routines.
 
 ---
 

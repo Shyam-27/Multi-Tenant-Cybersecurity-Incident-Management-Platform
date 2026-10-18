@@ -13,7 +13,7 @@ services:
       timeout: 5s
       retries: 12
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432"
   redis:
     image: redis:7-alpine
     command: redis-server --appendonly yes
@@ -25,7 +25,7 @@ services:
       timeout: 3s
       retries: 10
     ports:
-      - "6379:6379"
+      - "127.0.0.1:6379:6379"
   backend:
     build: ./backend
     env_file: .env
