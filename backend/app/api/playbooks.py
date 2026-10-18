@@ -47,6 +47,8 @@ def create_playbook(
         is_enabled=payload.is_enabled,
         is_dry_run=payload.is_dry_run,
         requires_approval=payload.requires_approval,
+        trigger_conditions=payload.trigger_conditions,
+        cooldown_seconds=payload.cooldown_seconds,
         created_by_id=current_user.id,
     )
     db.add(playbook)
@@ -65,6 +67,7 @@ def create_playbook(
             "name": playbook.name,
             "actions_count": len(playbook.actions),
             "is_dry_run": playbook.is_dry_run,
+            "trigger_event": playbook.trigger_event,
         },
     )
     db.commit()
@@ -114,20 +117,36 @@ def update_playbook(
     if current_user.role != UserRole.SUPER_ADMIN.value and playbook.tenant_id != current_user.tenant_id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Playbook not found")
 
+    version_bump = False
     if payload.name is not None:
         playbook.name = payload.name.strip()
     if payload.description is not None:
         playbook.description = payload.description.strip()
+    if payload.trigger_event is not None and payload.trigger_event != playbook.trigger_event:
+        playbook.trigger_event = payload.trigger_event.strip()
+        version_bump = True
     if payload.actions is not None:
         if not payload.actions:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Actions list cannot be empty")
         playbook.actions = payload.actions
+        version_bump = True
+    if payload.trigger_conditions is not None:
+        playbook.trigger_conditions = payload.trigger_conditions
+        version_bump = True
+    if payload.cooldown_seconds is not None:
+        playbook.cooldown_seconds = payload.cooldown_seconds
+        version_bump = True
     if payload.is_enabled is not None:
         playbook.is_enabled = payload.is_enabled
     if payload.is_dry_run is not None:
         playbook.is_dry_run = payload.is_dry_run
+        version_bump = True
     if payload.requires_approval is not None:
         playbook.requires_approval = payload.requires_approval
+        version_bump = True
+
+    if version_bump:
+        playbook.rule_version += 1
 
     record_audit_event(
         db=db,
@@ -138,7 +157,12 @@ def update_playbook(
         actor_user=current_user,
         actor_type=ActorType.USER,
         tenant_id=playbook.tenant_id,
-        details={"name": playbook.name, "is_dry_run": playbook.is_dry_run},
+        details={
+            "name": playbook.name,
+            "is_dry_run": playbook.is_dry_run,
+            "rule_version": playbook.rule_version,
+            "trigger_event": playbook.trigger_event,
+        },
     )
     db.commit()
     db.refresh(playbook)

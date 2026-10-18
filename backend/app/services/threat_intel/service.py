@@ -149,6 +149,25 @@ class ThreatIntelService:
 
         db.commit()
         db.refresh(indicator)
+
+        # Phase 7C: Asynchronous playbook trigger evaluation on malicious IOC detection
+        if aggregated_verdict == ThreatVerdict.MALICIOUS.value and indicator.incident_id:
+            try:
+                from app.core.celery_app import safe_apply_async
+                from app.tasks.playbook_tasks import evaluate_ioc_triggers_task
+
+                safe_apply_async(
+                    evaluate_ioc_triggers_task,
+                    args=[
+                        str(indicator.id),
+                        "ioc.enriched",
+                        None,
+                        str(actor_user.id) if actor_user else None,
+                    ],
+                )
+            except Exception as exc:
+                logger.error("Failed to enqueue IOC trigger evaluation: %s", exc)
+
         return indicator
 
 

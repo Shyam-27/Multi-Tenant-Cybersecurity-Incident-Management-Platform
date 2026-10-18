@@ -4,7 +4,7 @@
 
 The **Multi-Tenant Cybersecurity Incident Management Platform** (SentinelOps) is designed as an enterprise-grade SaaS application for tracking, analyzing, enriching, and resolving cybersecurity incidents across isolated customer organizations.
 
-This status document reflects the completion of **Phase 6: Threat Intelligence Feeds, SIEM Alerting & Incident Response Playbooks**, **Phase 6.1: Security Hardening & End-to-End Verification**, **Phase 7A: MFA, TOTP & Privileged-Action Security**, and **Phase 7B: Durable Background Processing and Scheduled Jobs**.
+This status document reflects the completion of **Phase 6: Threat Intelligence Feeds, SIEM Alerting & Incident Response Playbooks**, **Phase 6.1: Security Hardening & End-to-End Verification**, **Phase 7A: MFA, TOTP & Privileged-Action Security**, **Phase 7B: Durable Background Processing and Scheduled Jobs**, and **Phase 7C: Automated Incident Response & Dynamic Playbook Triggers**.
 
 ---
 
@@ -75,7 +75,8 @@ D:\CyberSecurity_Incident_Managment_Platform
 │   │       ├── 20261013_0006_create_audit_events.py
 │   │       ├── 20261016_0007_phase6_threat_intel_siem_playbooks.py
 │   │       ├── 20261017_0008_mfa_totp_step_up.py
-│   │       └── 20261018_0009_durable_jobs_and_webhooks.py
+│   │       ├── 20261018_0009_durable_jobs_and_webhooks.py
+│   │       └── 20261018_0010_playbook_triggers_and_idempotency.py
 │   ├── app/
 │   │   ├── __init__.py
 │   │   ├── main.py
@@ -130,6 +131,7 @@ D:\CyberSecurity_Incident_Managment_Platform
 │   │   │   ├── evidence_service.py
 │   │   │   ├── incident_service.py
 │   │   │   ├── playbook_service.py
+│   │   │   ├── playbook_trigger_service.py
 │   │   │   ├── threat_intel/
 │   │   │   │   ├── __init__.py
 │   │   │   │   ├── abuseipdb.py
@@ -141,6 +143,7 @@ D:\CyberSecurity_Incident_Managment_Platform
 │   │   │   └── webhook_service.py
 │   │   └── tasks/
 │   │       ├── __init__.py
+│   │       ├── playbook_tasks.py
 │   │       ├── threat_intel_tasks.py
 │   │       └── webhook_tasks.py
 │   └── tests/
@@ -153,6 +156,7 @@ D:\CyberSecurity_Incident_Managment_Platform
 │       ├── test_incidents.py
 │       ├── test_phase6_security_hardening.py
 │       ├── test_playbooks.py
+│       ├── test_playbook_triggers.py
 │       ├── test_security_and_tenancy.py
 │       ├── test_threat_intel.py
 │       └── test_webhooks.py
@@ -181,15 +185,15 @@ D:\CyberSecurity_Incident_Managment_Platform
 | **User Logout & Revocation** (`POST /api/v1/auth/logout`) | **VERIFIED** | JWT token `jti` revocation list invalidates logged-out tokens. Records `logout` audit event. |
 | **Role-Based Access Control (RBAC)** | **VERIFIED** | `SUPER_ADMIN`, `TENANT_ADMIN`, `SECURITY_ANALYST`, `SECURITY_VIEWER` enforced on all protected endpoints. |
 | **Tenant User Directory** (`/api/v1/users`) | **VERIFIED** | CRUD operations scoped strictly to the caller's tenant with anti-privilege escalation. |
-| **Incident Publishing & Lifecycle** (`/api/v1/incidents`) | **VERIFIED** | Creation, search, multi-field filtering, pagination, assignments, state transitions (`OPEN` → `INVESTIGATING` → `CONTAINED` → `RESOLVED` → `CLOSED`), and investigation notes. Automatically dispatches SIEM webhooks on critical severity or status change events. |
+| **Incident Publishing & Lifecycle** (`/api/v1/incidents`) | **VERIFIED** | Creation, search, multi-field filtering, pagination, assignments, state transitions (`OPEN` → `INVESTIGATING` → `CONTAINED` → `RESOLVED` → `CLOSED`), and investigation notes. Automatically dispatches SIEM webhooks and evaluates asynchronous playbook triggers on critical severity or status change events. |
 | **Evidence Management & Forensic Artifacts** (`/api/v1/incidents/{id}/evidence`) | **VERIFIED** | Multipart uploads with SHA-256 integrity digest, magic-byte validation, disk quota limits, streaming downloads with anti-MIME-sniffing headers, and tenant-isolated storage directories. |
 | **Immutable Audit Trail & Cryptographic Chaining** (`/api/v1/audit-events`) | **VERIFIED** | Append-only audit records, sequential tenant-scoped SHA-256 hash chaining, sensitive secret redaction, and cryptographic integrity verification (`/verify-chain`). |
-| **Threat Intelligence & IOC Management** (`/api/v1/iocs`) | **VERIFIED** | Tenant-isolated indicators (IPv4, IPv6, Domain, URL, SHA256, MD5), canonical normalization (enforces valid hostnames, strips credentials), multi-provider enrichment adapters (VirusTotal v3 with IPv6, AbuseIPDB v2, AlienVault OTX), configurable 24h cache TTL, deterministic confidence score aggregation (provider failure never becomes BENIGN), false positive flagging, asynchronous refresh queueing (`POST /api/v1/iocs/{id}/enrich-async`), and background enrichment audits. |
+| **Threat Intelligence & IOC Management** (`/api/v1/iocs`) | **VERIFIED** | Tenant-isolated indicators (IPv4, IPv6, Domain, URL, SHA256, MD5), canonical normalization (enforces valid hostnames, strips credentials), multi-provider enrichment adapters (VirusTotal v3 with IPv6, AbuseIPDB v2, AlienVault OTX), configurable 24h cache TTL, deterministic confidence score aggregation (provider failure never becomes BENIGN), false positive flagging, asynchronous refresh queueing (`POST /api/v1/iocs/{id}/enrich-async`), and automatic trigger evaluation on malicious verdicts. |
 | **SIEM & Webhook Dispatcher** (`/api/v1/destinations`) | **VERIFIED** | Custom formatters for Splunk HEC, Elastic SIEM, Microsoft Teams, Slack, and generic webhooks. Fortified SSRF defense with `is_prohibited_ip` covering IPv4-mapped IPv6 loopback (`::ffff:127.0.0.1`), link-local metadata, private RFC1918 subnets, and credentials stripping. Dispatch-time revalidation, disabled outbound redirects (`follow_redirects=False`), infinite recursion guard (`audit.`, `webhook.`, `test.`, `delivery.`), synthetic test ping header (`X-SentinelOps-Synthetic: true`), tenant-scoped deliveries list (`/deliveries/list`), manual retry endpoint (`POST /api/v1/destinations/deliveries/{id}/retry`), and durable background retry worker. |
 | **Durable Background Processing & Worker Queues** (`Celery + Redis`) | **VERIFIED** | Asynchronous task execution with Celery 5.4.0 and Redis 7. Webhook delivery intent persisted with `PENDING` status before worker acknowledgment. Concurrent execution protection via row-level locks. Exponential backoff with bounded jitter (`min(300, 2^(attempt-1)*10) + jitter`), transient vs. permanent error classification (4xx immediately marked terminal failure), max 5 retry attempts. Background job tracking model (`BackgroundJob`), tenant-isolated jobs API (`/api/v1/jobs`), automated pending delivery recovery beat schedule, and periodic threat intelligence cache refresh beat schedule. Broker outage resilience ensures delivery intent is safely persisted in PostgreSQL even if Redis is temporarily unavailable. |
-| **Automated Response Playbooks** (`/api/v1/playbooks`) | **VERIFIED** | Configurable response playbooks with safe simulation mode (Dry Run), credential session revocation with anti-privilege escalation (analysts cannot revoke admins; tenant admins cannot revoke super admins), simulated EDR endpoint isolation with loopback protection, simulated firewall IP blocks, dual-authorization workflow with unconditional anti-self-approval enforcement, database row-level locking (`with_for_update()`) on approval gates, and partial failure recording. |
-| **Frontend SOC Operations Dashboard** | **VERIFIED** | Integrated navigation tabs for Incidents, Threat Intel, SIEM & Webhooks, Response Playbooks, Team Directory, Audit Trail, and Account Security. Modal drawers for multi-provider IOC intelligence, live test pings, delivery log viewer with retry action, playbook execution step traces, and background enrich queueing. |
-| **Automated Test Suite** | **VERIFIED** | 130 pytest test cases covering all platform phases and security hardening verification with 100% pass rate. |
+| **Automated Incident Response & Dynamic Playbook Triggers** (`/api/v1/playbooks`) | **VERIFIED** | Event-driven playbook evaluation triggered by incident escalation to `CRITICAL`, detection/enrichment of `MALICIOUS` IOCs, or multi-field rule matching (`RULE_MATCH`). Strictly transactional: evaluations enqueue after commit. Database unique constraints on `(tenant_id, trigger_event_id)` prevent duplicate executions across concurrent workers or task retries. Enforces configurable cooldown windows, active execution suppression, safe simulation defaults (DRY RUN), and unconditional forced dual-authorization approval workflow for live actions. Live execution continues to require Step-Up MFA and strictly enforces anti-self-approval. |
+| **Frontend SOC Operations Dashboard** | **VERIFIED** | Integrated navigation tabs for Incidents, Threat Intel, SIEM & Webhooks, Response Playbooks, Team Directory, Audit Trail, and Account Security. Modal drawers for multi-provider IOC intelligence, live test pings, delivery log viewer with retry action, playbook execution step traces with trigger source/reason attribution, and background enrich queueing. |
+| **Automated Test Suite** | **VERIFIED** | 152 pytest test cases covering all platform phases and security hardening verification with 100% pass rate. |
 
 ---
 
@@ -197,7 +201,7 @@ D:\CyberSecurity_Incident_Managment_Platform
 
 - **Database Engine**: PostgreSQL 16 Alpine running on port `5432` with volume `postgres_data`.
 - **Health**: Healthy.
-- **Alembic Status**: Current head revision is `20261018_0009`.
+- **Alembic Status**: Current head revision is `20261018_0010`.
 - **Applied Migrations**:
   1. `20260823_0001_create_users`: Users table.
   2. `20260823_0002_add_tenants`: Tenants table and `users.tenant_id` foreign key.
@@ -208,8 +212,9 @@ D:\CyberSecurity_Incident_Managment_Platform
   7. `20261016_0007_phase6_threat_intel_siem_playbooks`: Indicators of compromise, notification destinations, webhook deliveries, response playbooks, playbook executions, and playbook approvals tables with composite tenant indexes.
   8. `20261017_0008_mfa_totp_step_up`: MFA/TOTP columns and lockout controls on `users`, `user_recovery_codes` table with row locking, and step-up authorization columns on `playbook_executions` and `playbook_approvals`.
   9. `20261018_0009_durable_jobs_and_webhooks`: `background_jobs` table, delivery locking columns (`locked_at`, `locked_by`), error categorization (`last_error_category`), and terminal failure flags (`is_terminal_failure`) on `webhook_deliveries`.
+  10. `20261018_0010_playbook_triggers_and_idempotency`: `trigger_conditions`, `rule_version`, and `cooldown_seconds` on `response_playbooks`; `trigger_event_id`, `trigger_reason`, and unique constraint `uq_execution_tenant_trigger_event` on `playbook_executions`.
 - **Current Tables in Database**:
-  - `alembic_version` (revision: `20261018_0009`)
+  - `alembic_version` (revision: `20261018_0010`)
   - `tenants`
   - `users`
   - `user_recovery_codes`
@@ -230,19 +235,19 @@ D:\CyberSecurity_Incident_Managment_Platform
 ## 6. Test Results Summary
 
 Executed inside the running backend container (`docker compose exec backend pytest -q`):
-- **Total Test Cases**: 130
-- **Passing**: 130 (100%)
+- **Total Test Cases**: 152
+- **Passing**: 152 (100%)
 - **Failing**: 0
 - **Warnings**: 1 (Deprecated AnyIO import warning in Starlette test client)
-- **Duration**: ~61s
+- **Duration**: ~79s
 
 Frontend compilation test:
-- `docker compose exec frontend npm run build`: Built production bundle cleanly in 0.98s with zero errors (`tsc -b && vite build`).
+- `docker compose exec frontend npm run build`: Built production bundle cleanly in 1.97s with zero errors (`tsc -b && vite build`).
 
 ---
 
 ## 7. Next Implementation Milestones
 
-1. **Advanced Playbook Triggers**: Condition-based automatic trigger evaluation on ingested evidence or real-time security events.
-2. **WebAuthn / FIDO2 Hardware Key Support**: Hardware token biometric authentication via WebAuthn protocol for high-security SOC workstations.
-3. **Dead-Letter Queue (DLQ) Inspector**: Tenant admin triage and reprocessing tool for terminally failed webhook payloads and background jobs.
+1. **WebAuthn / FIDO2 Hardware Key Support**: Hardware token biometric authentication via WebAuthn protocol for high-security SOC workstations.
+2. **Dead-Letter Queue (DLQ) Inspector**: Tenant admin triage and reprocessing tool for terminally failed webhook payloads and background jobs.
+3. **Advanced Playbook Action Connectors**: Official cloud security connectors (AWS Security Hub, Microsoft Sentinel, CrowdStrike Falcon) with cryptographic mutual TLS.

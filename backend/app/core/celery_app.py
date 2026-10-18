@@ -15,6 +15,7 @@ celery_app = Celery(
     include=[
         "app.tasks.webhook_tasks",
         "app.tasks.threat_intel_tasks",
+        "app.tasks.playbook_tasks",
     ],
 )
 

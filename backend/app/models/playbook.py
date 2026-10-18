@@ -3,7 +3,7 @@ from enum import Enum
 from typing import Any
 from uuid import UUID, uuid4
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Index, String, Text, func
+from sqlalchemy import Boolean, DateTime, ForeignKey, Index, Integer, String, Text, UniqueConstraint, func
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.types import JSON
@@ -15,6 +15,7 @@ class PlaybookTrigger(str, Enum):
     MANUAL = "MANUAL"
     INCIDENT_CRITICAL = "INCIDENT_CRITICAL"
     MALICIOUS_IOC_DETECTED = "MALICIOUS_IOC_DETECTED"
+    RULE_MATCH = "RULE_MATCH"
 
 
 class PlaybookActionType(str, Enum):
@@ -54,6 +55,11 @@ class ResponsePlaybook(Base):
     is_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     is_dry_run: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)  # Safe default: dry-run enabled
     requires_approval: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)  # Safe default: human approval required
+    trigger_conditions: Mapped[dict[str, Any]] = mapped_column(
+        JSONB().with_variant(JSON(), "sqlite"), nullable=False, default=dict
+    )
+    rule_version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    cooldown_seconds: Mapped[int] = mapped_column(Integer, nullable=False, default=300)
     created_by_id: Mapped[UUID | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
@@ -80,6 +86,8 @@ class PlaybookExecution(Base):
     incident_id: Mapped[UUID | None] = mapped_column(ForeignKey("incidents.id", ondelete="SET NULL"), nullable=True, index=True)
     triggered_by_id: Mapped[UUID] = mapped_column(ForeignKey("users.id", ondelete="RESTRICT"), nullable=False, index=True)
     trigger_source: Mapped[str] = mapped_column(String(50), nullable=False, default="MANUAL")
+    trigger_event_id: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
+    trigger_reason: Mapped[str | None] = mapped_column(String(512), nullable=True)
     status: Mapped[str] = mapped_column(String(30), nullable=False, default=ExecutionStatus.PENDING_APPROVAL.value, index=True)
     is_dry_run: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     parameters: Mapped[dict[str, Any]] = mapped_column(
@@ -106,8 +114,10 @@ class PlaybookExecution(Base):
     approval: Mapped["PlaybookApproval | None"] = relationship(back_populates="execution", uselist=False, cascade="all, delete-orphan")
 
     __table_args__ = (
+        UniqueConstraint("tenant_id", "trigger_event_id", name="uq_execution_tenant_trigger_event"),
         Index("ix_executions_tenant_status", "tenant_id", "status"),
         Index("ix_executions_tenant_created", "tenant_id", "created_at"),
+        Index("ix_executions_tenant_playbook_incident", "tenant_id", "playbook_id", "incident_id", "created_at"),
     )
 
 

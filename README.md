@@ -1,6 +1,6 @@
 # SentinelOps — Multi-Tenant Cybersecurity Incident Management Platform
 
-SentinelOps is a production-grade, security-focused SaaS platform for managing cybersecurity incidents across isolated organizations. This repository implements **Phase 7A: MFA, TOTP & Privileged-Action Security** and **Phase 7B: Durable Background Processing and Scheduled Jobs**.
+SentinelOps is a production-grade, security-focused SaaS platform for managing cybersecurity incidents across isolated organizations. This repository implements **Phase 7A: MFA, TOTP & Privileged-Action Security**, **Phase 7B: Durable Background Processing and Scheduled Jobs**, and **Phase 7C: Automated Incident Response & Dynamic Playbook Triggers**.
 
 ---
 
@@ -23,20 +23,21 @@ Browser (React/TypeScript :5173) ──► FastAPI Backend (:8000) ──► Pos
                                               │         ├─► Celery Worker (:concurrency 2)
                                               │         └─► Celery Beat (Scheduler)
                                               │
-                                              ├──► Alembic Migrations (head: 20261018_0009)
+                                              ├──► Alembic Migrations (head: 20261018_0010)
                                               ├──► Append-Only Audit Trail (SHA-256 Hash Chain)
                                               ├──► Threat Intel Providers (VirusTotal, AbuseIPDB, OTX)
                                               ├──► SIEM Webhook Dispatcher (Splunk, Elastic, Teams, Slack)
                                               ├──► Durable Background Worker (Retry, Backoff, Jitter)
+                                              ├──► Dynamic Playbook Trigger Engine (Event-Driven)
                                               ├──► Incident Response Playbooks Engine
                                               └──► Tenant Storage (uploads/{tenant_id}/...)
 ```
 
-- **Frontend**: Vite 8.3, React 19, TypeScript 5.8, SOC operations dashboard with incident metrics, filtering, detail drawer, timeline notes, digital evidence artifacts, an Immutable Audit Trail log viewer, Threat Intelligence IOC explorer with multi-provider breakdown and background enrich queueing, SIEM webhook integration manager with live test pings, delivery retry actions, and Response Playbooks executor with approval workflows and Step-Up MFA.
-- **Backend**: FastAPI 0.116, SQLAlchemy 2.0, Pydantic 2.14, Argon2id password hashing, PyJWT HS256 tokens, streaming file validation, append-only audit recording service with cryptographic SHA-256 chaining, threat intelligence caching & aggregation engine, SSRF-safe webhook dispatcher, dual-authorization response playbook engine, and Celery 5.4 distributed worker with Redis 7 broker.
-- **Database**: PostgreSQL 16 Alpine with Alembic migrations (`20261018_0009`).
+- **Frontend**: Vite 8.3, React 19, TypeScript 5.8, SOC operations dashboard with incident metrics, filtering, detail drawer, timeline notes, digital evidence artifacts, an Immutable Audit Trail log viewer, Threat Intelligence IOC explorer with multi-provider breakdown and background enrich queueing, SIEM webhook integration manager with live test pings, delivery retry actions, and Response Playbooks executor with approval workflows, trigger source/reason attribution, and Step-Up MFA.
+- **Backend**: FastAPI 0.116, SQLAlchemy 2.0, Pydantic 2.14, Argon2id password hashing, PyJWT HS256 tokens, streaming file validation, append-only audit recording service with cryptographic SHA-256 chaining, threat intelligence caching & aggregation engine, SSRF-safe webhook dispatcher, dual-authorization response playbook engine, dynamic playbook trigger evaluation service, and Celery 5.4 distributed worker with Redis 7 broker.
+- **Database**: PostgreSQL 16 Alpine with Alembic migrations (`20261018_0010`).
 - **Distributed Cache & Broker**: Redis 7 Alpine with AOF persistence.
-- **Security**: Server-derived tenant context, strict RBAC authorization, constant-time authentication, IDOR mitigation (strict 404 policies on cross-tenant requests), token revocation, state-machine transition validation, streaming magic-byte signature inspection, SHA-256 integrity verification, SSRF blocking of private IP ranges/cloud metadata, anti-privilege escalation, anti-self-approval dual authorization, TOTP multi-factor authentication with encrypted secret storage, and append-only audit logging with cryptographic chain integrity checks.
+- **Security**: Server-derived tenant context, strict RBAC authorization, constant-time authentication, IDOR mitigation (strict 404 policies on cross-tenant requests), token revocation, state-machine transition validation, streaming magic-byte signature inspection, SHA-256 integrity verification, SSRF blocking of private IP ranges/cloud metadata, anti-privilege escalation, anti-self-approval dual authorization, TOTP multi-factor authentication with encrypted secret storage, atomic database deduplication of automated triggers, and append-only audit logging with cryptographic chain integrity checks.
 
 ---
 
@@ -139,7 +140,7 @@ Migrations execute automatically upon container startup (`alembic upgrade head`)
   ```powershell
   docker compose exec backend alembic current
   ```
-  *(Expected: `20261018_0009 (head)`)*
+  *(Expected: `20261018_0010 (head)`)*
 - **Apply Migrations**:
   ```powershell
   docker compose exec backend alembic upgrade head
@@ -159,7 +160,7 @@ Run the full pytest suite in the isolated test environment:
 docker compose exec backend pytest -q
 ```
 
-**130 automated test cases** cover:
+**152 automated test cases** cover:
 - Health probes and database connectivity.
 - Authentication, Argon2id hashing, and JWT lifecycle/logout revocation.
 - TOTP Multi-Factor Authentication (RFC 6238), provisioning URI, self-contained SVG QR codes.
@@ -181,6 +182,7 @@ docker compose exec backend pytest -q
 - Webhook SSRF validation (blocking loopback, RFC1918, cloud metadata), destination management, synthetic ping, and incident dispatch integration.
 - Durable Celery + Redis background processing: intent persisted before worker ack (`PENDING`), row locking (`locked_at`, `locked_by`), transient vs. permanent error classification, exponential backoff with bounded jitter, max 5 attempts to terminal failure, recovery beat worker for stuck/pending deliveries, broker outage resilience, and dispatch-time SSRF revalidation prohibiting redirects.
 - Background IOC threat intelligence refresh: non-blocking async endpoint, periodic scheduled refresh, anti-tampering verdict preservation (provider outages never become BENIGN).
+- Automated Incident Response & Dynamic Playbook Triggers: incident escalation to CRITICAL, malicious IOC detection with verified incident association, multi-field rule matching (`RULE_MATCH`), atomic database deduplication via unique constraint `(tenant_id, trigger_event_id)`, active execution suppression, configurable cooldowns, rule versioning, safe simulation defaults (DRY RUN), forced dual-authorization approval workflow for live actions, and anti-self-approval protection.
 - Playbook dry-run simulation, credential revocation, anti-privilege escalation, loopback shield, dual-authorization approval, and anti-self-approval rejection.
 
 ---

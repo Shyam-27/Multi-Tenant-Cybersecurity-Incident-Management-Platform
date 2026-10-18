@@ -227,6 +227,18 @@ def create_incident(
         except Exception:
             pass
 
+    # Phase 7C: Asynchronous playbook trigger evaluation
+    try:
+        from app.core.celery_app import safe_apply_async
+        from app.tasks.playbook_tasks import evaluate_incident_triggers_task
+
+        safe_apply_async(
+            evaluate_incident_triggers_task,
+            args=[str(incident.id), "incident.created", None, str(current_user.id)],
+        )
+    except Exception:
+        pass
+
     # Re-fetch with loaded relations
     loaded_incident = db.scalar(
         select(Incident)
@@ -443,6 +455,23 @@ def update_incident(
                     "updated_by": current_user.email,
                 },
                 actor_user=current_user,
+            )
+        except Exception:
+            pass
+
+    # Phase 7C: Asynchronous playbook trigger evaluation on qualifying severity/status changes
+    if "severity" in changes or "status" in changes:
+        try:
+            from app.core.celery_app import safe_apply_async
+            from app.tasks.playbook_tasks import evaluate_incident_triggers_task
+
+            prev_state = {
+                "severity": changes.get("severity", {}).get("old"),
+                "status": changes.get("status", {}).get("old"),
+            }
+            safe_apply_async(
+                evaluate_incident_triggers_task,
+                args=[str(incident.id), "incident.updated", prev_state, str(current_user.id)],
             )
         except Exception:
             pass

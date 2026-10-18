@@ -188,6 +188,9 @@ def trigger_playbook_execution(
     override_dry_run: bool | None = None,
     step_up_token: str | None = None,
     mfa_code: str | None = None,
+    trigger_source: str = "MANUAL",
+    trigger_event_id: str | None = None,
+    trigger_reason: str | None = None,
 ) -> PlaybookExecution:
     """
     Initiates a playbook run. If requires_approval is True and not in dry_run,
@@ -219,7 +222,9 @@ def trigger_playbook_execution(
         playbook_id=playbook.id,
         incident_id=incident_id,
         triggered_by_id=actor_user.id,
-        trigger_source="MANUAL",
+        trigger_source=trigger_source,
+        trigger_event_id=trigger_event_id,
+        trigger_reason=trigger_reason,
         status=initial_status,
         is_dry_run=is_dry_run,
         parameters=params,

@@ -171,11 +171,15 @@ interface Playbook {
   tenant_id: string;
   name: string;
   description: string;
-  trigger_type: string;
+  trigger_event?: string;
+  trigger_type?: string;
   actions: string[];
   is_enabled: boolean;
   is_dry_run: boolean;
   requires_approval: boolean;
+  trigger_conditions?: Record<string, any>;
+  rule_version?: number;
+  cooldown_seconds?: number;
   created_at: string;
   updated_at: string;
 }
@@ -197,6 +201,9 @@ interface PlaybookExecutionItem {
   playbook_id: string;
   incident_id: string | null;
   triggered_by_id: string | null;
+  trigger_source?: string;
+  trigger_event_id?: string | null;
+  trigger_reason?: string | null;
   status: string;
   is_dry_run: boolean;
   execution_log: any[];
@@ -3678,6 +3685,28 @@ export function App() {
                     </span>
                   </p>
                 </div>
+                <div>
+                  <span className="meta-label">Trigger Source</span>
+                  <p>
+                    <span className="category-tag">
+                      {selectedExecutionDetails.trigger_source || "MANUAL"}
+                    </span>
+                  </p>
+                </div>
+                <div>
+                  <span className="meta-label">Target Incident</span>
+                  <p style={{ fontSize: "0.8rem", fontFamily: "monospace" }}>
+                    {selectedExecutionDetails.incident_id || "None"}
+                  </p>
+                </div>
+                {selectedExecutionDetails.trigger_reason && (
+                  <div style={{ gridColumn: "span 2" }}>
+                    <span className="meta-label">Trigger Reason</span>
+                    <p style={{ fontSize: "0.8rem", color: "var(--text-muted)", marginTop: "0.2rem" }}>
+                      {selectedExecutionDetails.trigger_reason}
+                    </p>
+                  </div>
+                )}
                 <div>
                   <span className="meta-label">Started At</span>
                   <p>{selectedExecutionDetails.started_at ? new Date(selectedExecutionDetails.started_at).toLocaleString() : "—"}</p>

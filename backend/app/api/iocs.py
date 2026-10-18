@@ -9,7 +9,7 @@ from app.core.database import get_db
 from app.dependencies.auth import get_current_user, require_roles
 from app.models.audit import ActorType, AuditOutcome
 from app.models.incident import Incident
-from app.models.ioc import IndicatorOfCompromise
+from app.models.ioc import IndicatorOfCompromise, ThreatVerdict
 from app.models.job import BackgroundJob, JobStatus, JobType
 from app.models.user import User, UserRole
 from app.schemas.ioc import CreateIOCRequest, EnrichIOCRequest, IOCListResponse, IOCResponse, UpdateIOCRequest
@@ -170,6 +170,8 @@ def update_ioc(
     if current_user.role != UserRole.SUPER_ADMIN.value and ioc.tenant_id != current_user.tenant_id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Indicator not found")
 
+    previous_verdict = ioc.threat_verdict
+
     if payload.is_false_positive is not None:
         ioc.is_false_positive = payload.is_false_positive
     if payload.notes is not None:
@@ -195,6 +197,29 @@ def update_ioc(
     )
     db.commit()
     db.refresh(ioc)
+
+    # Phase 7C: Asynchronous playbook trigger evaluation on malicious IOC update
+    if (
+        previous_verdict != ThreatVerdict.MALICIOUS.value
+        and ioc.threat_verdict == ThreatVerdict.MALICIOUS.value
+        and ioc.incident_id
+    ):
+        try:
+            from app.core.celery_app import safe_apply_async
+            from app.tasks.playbook_tasks import evaluate_ioc_triggers_task
+
+            safe_apply_async(
+                evaluate_ioc_triggers_task,
+                args=[
+                    str(ioc.id),
+                    "ioc.updated",
+                    previous_verdict,
+                    str(current_user.id),
+                ],
+            )
+        except Exception:
+            pass
+
     return ioc
 
 
