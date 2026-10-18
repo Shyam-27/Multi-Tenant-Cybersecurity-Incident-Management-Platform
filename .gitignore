@@ -6,3 +6,5 @@ __pycache__/
 backend/uploads/
 frontend/node_modules/
 frontend/dist/
+celerybeat-schedule*
+*.dump

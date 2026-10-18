@@ -49,6 +49,8 @@ class DeliveryResponse(BaseModel):
     last_attempt_at: datetime | None
     response_status_code: int | None
     error_summary: str | None
+    last_error_category: str | None = None
+    is_terminal_failure: bool = False
     created_at: datetime
 
     model_config = ConfigDict(from_attributes=True)
@@ -67,3 +69,9 @@ class TestWebhookResponse(BaseModel):
     status_code: int | None
     error: str | None
     message: str
+
+
+class RetryDeliveryResponse(BaseModel):
+    message: str
+    delivery: DeliveryResponse
+

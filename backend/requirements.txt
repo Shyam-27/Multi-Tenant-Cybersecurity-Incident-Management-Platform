@@ -1,5 +1,6 @@
 alembic==1.16.5
 argon2-cffi==25.1.0
+celery==5.4.0
 cryptography==50.0.2
 email-validator==2.2.0
 fastapi==0.116.1
@@ -11,5 +12,7 @@ pyotp==2.10.0
 python-multipart==0.0.20
 pytest==8.4.1
 qrcode==8.2
+redis==5.2.1
 sqlalchemy==2.0.43
 uvicorn[standard]==0.35.0
+

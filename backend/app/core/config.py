@@ -20,12 +20,17 @@ class Settings(BaseSettings):
     # Phase 6: SIEM & Webhook Dispatcher
     allow_local_webhooks: bool = Field(default=False, validation_alias="ALLOW_LOCAL_WEBHOOKS")
     webhook_timeout_seconds: int = Field(default=10, ge=2, le=60, validation_alias="WEBHOOK_TIMEOUT_SECONDS")
-    webhook_max_retries: int = Field(default=3, ge=1, le=10, validation_alias="WEBHOOK_MAX_RETRIES")
+    webhook_max_retries: int = Field(default=5, ge=1, le=10, validation_alias="WEBHOOK_MAX_RETRIES")
 
     # Phase 7A: MFA & Privileged-Action Security
     mfa_encryption_key: str | None = Field(default=None, validation_alias="MFA_ENCRYPTION_KEY")
     mfa_challenge_expire_minutes: int = Field(default=5, ge=1, le=30, validation_alias="MFA_CHALLENGE_EXPIRE_MINUTES")
     mfa_step_up_expire_minutes: int = Field(default=5, ge=1, le=30, validation_alias="MFA_STEP_UP_EXPIRE_MINUTES")
+
+    # Phase 7B: Durable Background Processing & Scheduled Jobs
+    celery_broker_url: str = Field(default="redis://redis:6379/0", validation_alias="CELERY_BROKER_URL")
+    celery_result_backend: str = Field(default="redis://redis:6379/1", validation_alias="CELERY_RESULT_BACKEND")
+    redis_url: str = Field(default="redis://redis:6379/0", validation_alias="REDIS_URL")
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore", enable_decoding=False)
 

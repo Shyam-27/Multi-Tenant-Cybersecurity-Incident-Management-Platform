@@ -10,8 +10,10 @@ from app.dependencies.auth import get_current_user, require_roles
 from app.models.audit import ActorType, AuditOutcome
 from app.models.incident import Incident
 from app.models.ioc import IndicatorOfCompromise
+from app.models.job import BackgroundJob, JobStatus, JobType
 from app.models.user import User, UserRole
 from app.schemas.ioc import CreateIOCRequest, EnrichIOCRequest, IOCListResponse, IOCResponse, UpdateIOCRequest
+from app.schemas.job import AsyncIOCEnrichResponse
 from app.services.audit_service import record_audit_event
 from app.services.threat_intel.normalizer import normalize_indicator
 from app.services.threat_intel.service import get_threat_intel_service
@@ -222,3 +224,59 @@ def enrich_ioc(
         actor_user=current_user,
     )
     return enriched
+
+
+@router.post("/{id}/enrich-async", response_model=AsyncIOCEnrichResponse, status_code=status.HTTP_202_ACCEPTED)
+def enrich_ioc_async(
+    id: UUID,
+    payload: EnrichIOCRequest | None = None,
+    current_user: User = Depends(require_roles(UserRole.TENANT_ADMIN, UserRole.SECURITY_ANALYST, UserRole.SUPER_ADMIN)),
+    db: Session = Depends(get_db),
+) -> AsyncIOCEnrichResponse:
+    ioc = db.scalar(select(IndicatorOfCompromise).where(IndicatorOfCompromise.id == id))
+    if not ioc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Indicator not found")
+
+    if current_user.role != UserRole.SUPER_ADMIN.value and ioc.tenant_id != current_user.tenant_id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Indicator not found")
+
+    force_refresh = payload.force_refresh if payload else True
+
+    job = BackgroundJob(
+        tenant_id=ioc.tenant_id,
+        job_type=JobType.THREAT_INTEL_REFRESH.value,
+        status=JobStatus.QUEUED.value,
+        resource_id=str(ioc.id),
+        parameters={"indicator_type": ioc.indicator_type, "value": ioc.value, "force_refresh": force_refresh},
+    )
+    db.add(job)
+
+    record_audit_event(
+        db=db,
+        action="IOC_ENRICH_ASYNC_REQUESTED",
+        resource_type="ioc",
+        resource_id=str(ioc.id),
+        outcome=AuditOutcome.SUCCESS,
+        actor_user=current_user,
+        actor_type=ActorType.USER,
+        tenant_id=ioc.tenant_id,
+        details={"indicator_type": ioc.indicator_type, "value": ioc.value},
+    )
+    db.commit()
+    db.refresh(job)
+
+    from app.core.celery_app import safe_apply_async
+    from app.tasks.threat_intel_tasks import refresh_threat_intel_task
+
+    safe_apply_async(
+        refresh_threat_intel_task,
+        args=[str(ioc.id), str(ioc.tenant_id), force_refresh, str(current_user.id), str(job.id)],
+    )
+
+    return AsyncIOCEnrichResponse(
+        message="Threat intelligence enrichment job successfully queued",
+        job_id=job.id,
+        ioc_id=ioc.id,
+        status=job.status,
+    )
+

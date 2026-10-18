@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
 from app.models.audit import ActorType, AuditOutcome
+from app.models.job import BackgroundJob, JobStatus, JobType
 from app.models.user import User
 from app.models.webhook import DeliveryStatus, DestinationType, NotificationDestination, WebhookDelivery
 from app.services.audit_service import record_audit_event, sanitize_audit_details
@@ -280,13 +281,18 @@ def dispatch_event_to_destinations(
     payload: dict[str, Any],
     actor_user: User | None = None,
     client: httpx.Client | None = None,
+    sync: bool = False,
 ) -> list[WebhookDelivery]:
     """
-    Asynchronously or synchronously dispatches events to all active subscribed destinations.
-    Enforces deduplication / idempotency and records outcomes.
+    Dispatches events to all active subscribed destinations.
+    Phase 7B durable delivery:
+    1. Intent is strictly persisted in PostgreSQL (PENDING status) BEFORE acknowledgment.
+    2. Background job record created for tenant observability.
+    3. Asynchronously enqueued to Celery with safe fallback if broker is offline.
+    4. If client or sync=True is provided, executes synchronously (for test suites).
     """
     # Infinite webhook recursion guard: do not dispatch webhook/audit internal events
-    RECURSION_PROHIBITED_PREFIXES = ("audit.", "webhook.", "test.", "delivery.")
+    RECURSION_PROHIBITED_PREFIXES = ("audit.", "webhook.", "test.", "delivery.", "job.")
     if any(event_type.startswith(prefix) for prefix in RECURSION_PROHIBITED_PREFIXES):
         logger.debug("Ignoring event '%s' to prevent recursive webhook triggering", event_type)
         return []
@@ -325,35 +331,54 @@ def dispatch_event_to_destinations(
             event_type=event_type,
             payload=sanitize_audit_details(payload),
             status=DeliveryStatus.PENDING.value,
-            attempt_count=1,
+            attempt_count=0,
             max_attempts=settings.webhook_max_retries,
-            last_attempt_at=now,
             idempotency_key=idempotency_key,
         )
         db.add(delivery)
         db.flush()
 
-        success, code, err = deliver_webhook_now(dest, event_type, payload, delivery.id, client=client)
-        delivery.response_status_code = code
+        job = BackgroundJob(
+            tenant_id=tenant_id,
+            job_type=JobType.WEBHOOK_DELIVERY.value,
+            status=JobStatus.QUEUED.value,
+            resource_id=str(delivery.id),
+            parameters={"destination_name": dest.name, "event_type": event_type},
+        )
+        db.add(job)
+        db.flush()
 
-        if success:
-            delivery.status = DeliveryStatus.SUCCESS.value
-            delivery.error_summary = None
-        else:
-            delivery.error_summary = err
-            if delivery.attempt_count < delivery.max_attempts:
-                delivery.status = DeliveryStatus.RETRYING.value
-                delivery.next_retry_at = now + timedelta(seconds=15 * delivery.attempt_count)
+        from app.core.celery_app import celery_app, safe_apply_async
+        from app.tasks.webhook_tasks import dispatch_webhook_delivery_task
+
+        if client is not None or sync:
+            delivery.attempt_count = 1
+            delivery.last_attempt_at = now
+            success, code, err = deliver_webhook_now(dest, event_type, payload, delivery.id, client=client)
+            delivery.response_status_code = code
+
+            if success:
+                delivery.status = DeliveryStatus.SUCCESS.value
+                delivery.error_summary = None
+                job.status = JobStatus.COMPLETED.value
             else:
-                delivery.status = DeliveryStatus.FAILED.value
+                delivery.error_summary = err
+                is_terminal = (code is not None and 400 <= code < 500 and code != 429) or (code is not None and 300 <= code < 400)
+                if is_terminal or delivery.attempt_count >= delivery.max_attempts:
+                    delivery.status = DeliveryStatus.FAILED.value
+                    delivery.is_terminal_failure = True
+                    job.status = JobStatus.FAILED.value
+                else:
+                    delivery.status = DeliveryStatus.RETRYING.value
+                    delivery.next_retry_at = now + timedelta(seconds=15)
+                    job.status = JobStatus.RETRYING.value
+            db.commit()
+        else:
+            # Commit intent to PostgreSQL BEFORE asynchronous task dispatch
+            db.commit()
+            safe_apply_async(dispatch_webhook_delivery_task, args=[str(delivery.id)])
 
         deliveries.append(delivery)
-
-    try:
-        db.commit()
-    except Exception as exc:
-        db.rollback()
-        logger.error("Failed to commit webhook deliveries: %s", exc)
 
     return deliveries
 

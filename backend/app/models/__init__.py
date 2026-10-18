@@ -19,6 +19,7 @@ from app.models.playbook import (
     PlaybookTrigger,
     ResponsePlaybook,
 )
+from app.models.job import BackgroundJob, JobStatus, JobType
 from app.models.tenant import Tenant
 from app.models.user import User, UserRecoveryCode, UserRole
 from app.models.webhook import DeliveryStatus, DestinationType, NotificationDestination, WebhookDelivery
@@ -28,6 +29,7 @@ __all__ = [
     "ApprovalStatus",
     "AuditEvent",
     "AuditOutcome",
+    "BackgroundJob",
     "DeliveryStatus",
     "DestinationType",
     "Evidence",
@@ -39,6 +41,8 @@ __all__ = [
     "IncidentStatus",
     "IndicatorOfCompromise",
     "IndicatorType",
+    "JobStatus",
+    "JobType",
     "NotificationDestination",
     "PlaybookActionType",
     "PlaybookApproval",

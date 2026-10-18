@@ -11,9 +11,13 @@ os.environ.setdefault("DATABASE_URL", "sqlite+pysqlite:///:memory:")
 os.environ["JWT_SECRET_KEY"] = "test-only-secret-key-with-at-least-32-characters"
 os.environ["MFA_ENCRYPTION_KEY"] = "w9Wf1V7BTCTmaIJIXhRa52bU846km9Ow5JJz843zqoM="
 
+from app.core.celery_app import celery_app
 from app.core.config import get_settings
 from app.core.database import Base, get_db
 from app.main import app
+
+celery_app.conf.task_always_eager = True
+celery_app.conf.task_eager_propagates = True
 
 
 @pytest.fixture
@@ -32,10 +36,16 @@ def test_db_session():
     engine = create_engine("sqlite+pysqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
     Base.metadata.create_all(engine)
     session_factory = sessionmaker(bind=engine, autocommit=False, autoflush=False)
+
+    import app.core.database as core_db
+    orig_session_local = core_db.SessionLocal
+    core_db.SessionLocal = session_factory
+
     db = session_factory()
     try:
         yield db
     finally:
+        core_db.SessionLocal = orig_session_local
         db.close()
 
 

@@ -153,8 +153,13 @@ interface WebhookDeliveryItem {
   event_type: string;
   payload: Record<string, any>;
   status: string;
-  http_status: number | null;
-  error_message: string | null;
+  http_status?: number | null;
+  response_status_code?: number | null;
+  error_message?: string | null;
+  error_summary?: string | null;
+  last_error_category?: string | null;
+  is_terminal_failure?: boolean;
+  next_retry_at?: string | null;
   attempt_count: number;
   latency_ms: number | null;
   created_at: string;
@@ -310,6 +315,8 @@ export function App() {
   const [destActionMsg, setDestActionMsg] = useState<string | null>(null);
   const [testingDestId, setTestingDestId] = useState<string | null>(null);
   const [destTestResult, setDestTestResult] = useState<{ id: string; success: boolean; message: string } | null>(null);
+  const [retryingDeliveryId, setRetryingDeliveryId] = useState<string | null>(null);
+  const [asyncEnrichingIocId, setAsyncEnrichingIocId] = useState<string | null>(null);
 
   // Response Playbooks State
   const [playbooks, setPlaybooks] = useState<Playbook[]>([]);
@@ -1158,6 +1165,29 @@ export function App() {
     }
   };
 
+  const handleAsyncEnrichIoc = async (iocItem: IOC) => {
+    setAsyncEnrichingIocId(iocItem.id);
+    try {
+      const res = await apiCall(`/iocs/${iocItem.id}/enrich-async`, {
+        method: "POST",
+        body: JSON.stringify({ force_refresh: true }),
+      });
+      if (res.ok) {
+        alert("Enrichment background task enqueued! Results will update automatically.");
+        setTimeout(() => {
+          loadIocs();
+        }, 1500);
+      } else {
+        const err = await res.json().catch(() => ({}));
+        alert(`Background refresh failed: ${err.detail || "Unknown error"}`);
+      }
+    } catch (err: any) {
+      alert(`Background refresh error: ${err.message}`);
+    } finally {
+      setAsyncEnrichingIocId(null);
+    }
+  };
+
   const handleToggleFalsePositive = async (iocItem: IOC) => {
     try {
       const res = await apiCall(`/iocs/${iocItem.id}`, {
@@ -1204,6 +1234,25 @@ export function App() {
       console.error("Failed to load deliveries", err);
     } finally {
       setDeliveriesLoading(false);
+    }
+  };
+
+  const handleRetryDelivery = async (deliveryId: string) => {
+    setRetryingDeliveryId(deliveryId);
+    try {
+      const res = await apiCall(`/destinations/deliveries/${deliveryId}/retry`, {
+        method: "POST",
+      });
+      if (res.ok) {
+        await loadDeliveries();
+      } else {
+        const err = await res.json();
+        alert(err.detail || "Failed to trigger delivery retry");
+      }
+    } catch (err) {
+      console.error("Retry delivery failed", err);
+    } finally {
+      setRetryingDeliveryId(null);
     }
   };
 
@@ -2533,16 +2582,17 @@ export function App() {
                       <th>Dispatched At</th>
                       <th>Event</th>
                       <th>HTTP Code</th>
-                      <th>Latency</th>
+                      <th>Category</th>
                       <th>Attempts</th>
                       <th>Status</th>
-                      <th>Error</th>
+                      <th>Error Summary</th>
+                      <th>Action</th>
                     </tr>
                   </thead>
                   <tbody>
                     {deliveries.length === 0 ? (
                       <tr>
-                        <td colSpan={7} className="empty-message">
+                        <td colSpan={8} className="empty-message">
                           {deliveriesLoading ? "Loading dispatch logs..." : "No recent webhook deliveries recorded."}
                         </td>
                       </tr>
@@ -2558,23 +2608,41 @@ export function App() {
                             <span className="category-tag">{del.event_type}</span>
                           </td>
                           <td>
-                            <code>{del.http_status ?? "—"}</code>
+                            <code>{del.response_status_code ?? del.http_status ?? "—"}</code>
                           </td>
                           <td>
-                            <span style={{ fontSize: "0.75rem" }}>
-                              {del.latency_ms ? `${del.latency_ms.toFixed(0)} ms` : "—"}
+                            <span style={{ fontSize: "0.75rem", fontFamily: "monospace" }}>
+                              {del.last_error_category || "—"}
                             </span>
                           </td>
-                          <td>{del.attempt_count}</td>
                           <td>
-                            <span className={`badge ${del.status === "SUCCESS" ? "badge-success" : del.status === "PENDING" ? "badge-inactive" : "sev-critical"}`}>
+                            <span style={{ fontSize: "0.8rem" }}>
+                              {del.attempt_count}
+                              {del.is_terminal_failure ? " (Terminal)" : ""}
+                            </span>
+                          </td>
+                          <td>
+                            <span className={`badge ${del.status === "SUCCESS" ? "badge-success" : del.status === "PENDING" ? "badge-inactive" : del.status === "RETRYING" ? "sev-medium" : "sev-critical"}`}>
                               {del.status}
                             </span>
                           </td>
                           <td>
                             <span style={{ fontSize: "0.75rem", color: "var(--accent-rose)" }}>
-                              {del.error_message || "—"}
+                              {del.error_summary || del.error_message || "—"}
                             </span>
+                          </td>
+                          <td>
+                            {del.status !== "SUCCESS" && (
+                              <button
+                                type="button"
+                                className="secondary-btn btn-xs"
+                                onClick={() => handleRetryDelivery(del.id)}
+                                disabled={retryingDeliveryId === del.id}
+                                style={{ padding: "0.2rem 0.5rem", fontSize: "0.75rem" }}
+                              >
+                                {retryingDeliveryId === del.id ? "Retrying..." : "🔄 Retry"}
+                              </button>
+                            )}
                           </td>
                         </tr>
                       ))
@@ -3251,6 +3319,14 @@ export function App() {
                       disabled={enrichingIocId === selectedIoc.id}
                     >
                       {enrichingIocId === selectedIoc.id ? "Querying Providers..." : "⚡ Enrich Indicator Now"}
+                    </button>
+                    <button
+                      type="button"
+                      className="secondary-btn btn-sm"
+                      onClick={() => handleAsyncEnrichIoc(selectedIoc)}
+                      disabled={asyncEnrichingIocId === selectedIoc.id}
+                    >
+                      {asyncEnrichingIocId === selectedIoc.id ? "Queuing..." : "🔄 Queue Background Refresh"}
                     </button>
                     <button
                       type="button"

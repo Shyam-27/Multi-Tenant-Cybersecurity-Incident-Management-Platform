@@ -9,13 +9,15 @@ from app.core.config import get_settings
 from app.core.database import get_db
 from app.dependencies.auth import get_current_user, require_roles
 from app.models.audit import ActorType, AuditOutcome
+from app.models.job import BackgroundJob, JobStatus, JobType
 from app.models.user import User, UserRole
-from app.models.webhook import DestinationType, NotificationDestination, WebhookDelivery
+from app.models.webhook import DeliveryStatus, DestinationType, NotificationDestination, WebhookDelivery
 from app.schemas.webhook import (
     CreateDestinationRequest,
     DeliveryListResponse,
     DeliveryResponse,
     DestinationResponse,
+    RetryDeliveryResponse,
     TestWebhookResponse,
     UpdateDestinationRequest,
 )
@@ -281,3 +283,63 @@ def list_destination_deliveries(
         page_size=page_size,
         pages=pages,
     )
+
+
+@router.post("/deliveries/{delivery_id}/retry", response_model=RetryDeliveryResponse)
+def retry_webhook_delivery(
+    delivery_id: UUID,
+    current_user: User = Depends(require_roles(UserRole.SECURITY_ANALYST, UserRole.TENANT_ADMIN, UserRole.SUPER_ADMIN)),
+    db: Session = Depends(get_db),
+) -> RetryDeliveryResponse:
+    """Manually queues a retry for a failed or retrying webhook delivery with tenant isolation."""
+    delivery = db.scalar(select(WebhookDelivery).where(WebhookDelivery.id == delivery_id))
+    if not delivery:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Webhook delivery not found")
+
+    if current_user.role != UserRole.SUPER_ADMIN.value and delivery.tenant_id != current_user.tenant_id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Webhook delivery not found")
+
+    # Reset terminal flags and reset to pending
+    delivery.status = DeliveryStatus.PENDING.value
+    delivery.is_terminal_failure = False
+    delivery.locked_at = None
+    delivery.locked_by = None
+    delivery.next_retry_at = None
+    # Reset attempt count if it had hit max attempts so fresh attempts can proceed
+    if delivery.attempt_count >= delivery.max_attempts:
+        delivery.attempt_count = 0
+
+    job = BackgroundJob(
+        tenant_id=delivery.tenant_id,
+        job_type=JobType.DELIVERY_RETRY.value,
+        status=JobStatus.QUEUED.value,
+        resource_id=str(delivery.id),
+        parameters={"delivery_id": str(delivery.id), "event_type": delivery.event_type},
+    )
+    db.add(job)
+
+    record_audit_event(
+        db=db,
+        action="WEBHOOK_DELIVERY_RETRY_REQUESTED",
+        resource_type="webhook_delivery",
+        resource_id=str(delivery.id),
+        outcome=AuditOutcome.SUCCESS,
+        actor_user=current_user,
+        actor_type=ActorType.USER,
+        tenant_id=delivery.tenant_id,
+        details={"destination_id": str(delivery.destination_id), "event_type": delivery.event_type},
+    )
+
+    db.commit()
+    db.refresh(delivery)
+
+    from app.core.celery_app import safe_apply_async
+    from app.tasks.webhook_tasks import dispatch_webhook_delivery_task
+
+    safe_apply_async(dispatch_webhook_delivery_task, args=[str(delivery.id), True])
+
+    return RetryDeliveryResponse(
+        message="Webhook delivery retry successfully scheduled",
+        delivery=delivery,
+    )
+
